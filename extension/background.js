@@ -232,11 +232,51 @@
     return sendToTab(tabId, { __pt: true, type: 'pt:restore-page' });
   }
 
+  function firstActiveTab(tabs) {
+    var list = Array.isArray(tabs) ? tabs : [];
+    var fallback = null;
+
+    for (var i = 0; i < list.length; i += 1) {
+      var tab = list[i];
+      if (!tab || tab.id == null) continue;
+      if (!fallback) fallback = tab;
+      // Prefer a normal web page when Safari returns active tabs from
+      // several windows, for example an extension page or the Start Page.
+      if (!tab.url || /^https?:/i.test(tab.url)) return tab;
+    }
+
+    return fallback;
+  }
+
   function activeTab() {
-    return invoke(api.tabs.query, api.tabs, [{ active: true, currentWindow: true }]).then(function (tabs) {
-      if (!tabs || !tabs.length) throw new Error('没有找到当前标签页');
-      return tabs[0];
-    });
+    // Safari sometimes reports no tabs for `currentWindow` while the toolbar
+    // popup is open, because the popup is not a normal browser window.
+    // Fall back to the last focused window, then to any active tab.
+    var filters = [
+      { active: true, currentWindow: true },
+      { active: true, lastFocusedWindow: true },
+      { active: true }
+    ];
+    var index = 0;
+
+    function next() {
+      if (index >= filters.length) {
+        return Promise.reject(new PT.ProviderError('no-tab', '没有找到当前标签页', {
+          hint: '请确认 Safari 中有一个打开的网页，并让该网页处于最前面。'
+        }));
+      }
+
+      var filter = filters[index];
+      index += 1;
+
+      return invoke(api.tabs.query, api.tabs, [filter]).then(function (tabs) {
+        return firstActiveTab(tabs) || next();
+      }, function () {
+        return next();
+      });
+    }
+
+    return next();
   }
 
   /* ------------------------------------------------------------------ *

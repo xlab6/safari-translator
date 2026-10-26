@@ -20,9 +20,13 @@ function createBackgroundBrowser() {
 
   let sendToTabFails = 0;
   let sendToTabResponse = { ok: true };
+  let queryTabsImpl = null;
 
   const tabs = {
-    query() { return Promise.resolve([{ id: 7, active: true }]); },
+    query(filter) {
+      if (queryTabsImpl) return queryTabsImpl(filter);
+      return Promise.resolve([{ id: 7, active: true, url: 'https://example.com' }]);
+    },
     sendMessage(tabId, message) {
       sentToTabs.push({ tabId, message });
       if (sendToTabFails > 0) {
@@ -83,7 +87,8 @@ function createBackgroundBrowser() {
     clickListeners,
     storage,
     failNextSendToTab(times = 1) { sendToTabFails = times; },
-    setSendToTabResponse(response) { sendToTabResponse = response; }
+    setSendToTabResponse(response) { sendToTabResponse = response; },
+    setQueryTabs(fn) { queryTabsImpl = fn; }
   };
 }
 
@@ -208,7 +213,7 @@ test('ping and unknown requests answer through sendResponse', async () => {
   const { fixture } = setup();
   const ping = await dispatch(fixture, { __pt: true, type: 'pt:ping' });
   assert.equal(ping.response.ok, true);
-  assert.equal(ping.response.version, '1.0.2');
+  assert.equal(ping.response.version, '1.0.3');
 
   const unknown = await dispatch(fixture, { __pt: true, type: 'pt:whatever' });
   assert.equal(unknown.response.ok, false);
@@ -360,6 +365,37 @@ test('page actions target the active tab', async () => {
   const restored = await dispatch(fixture, { __pt: true, type: 'restore-active-page' });
   assert.equal(restored.response.ok, true);
   assert.equal(fixture.sentToTabs[1].message.type, 'pt:restore-page');
+});
+
+test('page actions fall back when currentWindow has no tabs', async () => {
+  const { fixture } = setup();
+  const filters = [];
+  fixture.setQueryTabs((filter) => {
+    filters.push(filter);
+    if (filter.currentWindow || filter.lastFocusedWindow) return Promise.resolve([]);
+    return Promise.resolve([{ id: 11, active: true, url: 'https://example.com/page' }]);
+  });
+
+  const result = await dispatch(fixture, { __pt: true, type: 'translate-active-page', mode: 'replace' });
+  assert.equal(result.response.ok, true);
+  assert.equal(fixture.sentToTabs.length, 1);
+  assert.equal(fixture.sentToTabs[0].tabId, 11);
+  assert.equal(filters.length, 3);
+  assert.equal(filters[2].active, true);
+  assert.equal(filters[2].currentWindow, undefined);
+  assert.equal(filters[2].lastFocusedWindow, undefined);
+});
+
+test('page actions explain when no active tab can be found', async () => {
+  const { fixture } = setup();
+  fixture.setQueryTabs(() => Promise.resolve([]));
+
+  const result = await dispatch(fixture, { __pt: true, type: 'translate-active-page' });
+  assert.equal(result.response.ok, false);
+  assert.equal(result.response.error.code, 'no-tab');
+  assert.match(result.response.error.message, /没有找到当前标签页/);
+  assert.match(result.response.error.hint, /Safari/);
+  assert.equal(fixture.sentToTabs.length, 0);
 });
 
 test('a missing content script triggers injection and a retry', async () => {
