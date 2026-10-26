@@ -11,6 +11,8 @@
 
 [English README](README.en.md) · [交互演示](demo/preview.html)
 
+[![下载 DMG](https://img.shields.io/github/v/release/xlab6/safari-translator?style=for-the-badge&label=%E4%B8%8B%E8%BD%BD%20DMG&color=blue)](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
+
 ---
 
 ## 目录
@@ -97,6 +99,21 @@
 - Xcode 15 或更高版本（本项目在 Xcode 27.1 上构建通过）
 - Safari 16.4 或更高版本
 
+### 直接下载（预览版）
+
+[下载 Safari Translator 1.0.0 DMG](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
+
+当前发布包使用 `Apple Development` 证书签名，**未经过 Apple 公证**。首次打开如果提示“无法验证开发者”：
+
+- 在“应用程序”中右键 **Safari Translator** → **打开** → 再点一次 **打开**；或
+- 在终端执行：
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Safari Translator.app"
+  ```
+
+> 这是预览分发。要让用户下载后双击直接打开、不出现安全提示，必须使用付费 Apple Developer Program 的 `Developer ID Application` 证书并完成公证；见下文「签名、公证与发布 DMG」。
+
 ### 从源码构建
 
 1. 打开工程：
@@ -138,7 +155,7 @@ xcodebuild -project "Safari Translator.xcodeproj" \
 
 ### 签名、公证与发布 DMG
 
-> 对外分发需要 **付费 Apple Developer Program** 的 `Developer ID Application` 证书，并完成 Apple 公证。免费 Personal Team 只有 `Apple Development` 证书，只能本机调试，**不能公证，也不能用于其他人下载后直接打开**。
+> 要让其他人下载后双击直接打开、不出现 Gatekeeper 提示，需要 **付费 Apple Developer Program** 的 `Developer ID Application` 证书并完成 Apple 公证。当前 GitHub Release 是使用本机 `Apple Development` 证书签名的预览包，未公证，首次打开需要右键「打开」或移除 quarantine；正式分发请按本节重新打包。
 
 1. 在 Xcode → Settings → Accounts → Manage Certificates 中创建 **Developer ID Application** 证书，或导入已有的 `.p12`。
 2. 把公证凭据保存到钥匙串配置（密码是 Apple ID 的 App 专用密码，不是登录密码）：
@@ -159,7 +176,7 @@ xcodebuild -project "Safari Translator.xcodeproj" \
    npm run release:dmg
    ```
 
-脚本会签署 App 和内嵌 `.appex`、公证并 staple App、生成并签名 DMG、公证并 staple DMG，最后在 `dist/` 输出 DMG 和 SHA-256。只做本机签名、不公证时可加 `NOTARIZE=0`，但这样的包不能对外分发。
+脚本会签署 App 和内嵌 `.appex`、公证并 staple App、生成并签名 DMG、公证并 staple DMG，最后在 `dist/` 输出 DMG 和 SHA-256。只做本机签名、不公证时可加 `NOTARIZE=0`，但这样的包仍会被 Gatekeeper 拦截，只能作为预览包。
 
 ### 重新生成 Xcode 工程
 

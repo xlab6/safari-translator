@@ -11,6 +11,8 @@ A native Safari Web Extension (Manifest V2) that translates **only when you ask 
 
 [中文说明](README.md) · [Interactive demo](demo/preview.html)
 
+[![Download DMG](https://img.shields.io/github/v/release/xlab6/safari-translator?style=for-the-badge&label=Download%20DMG&color=blue)](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
+
 ---
 
 ## Contents
@@ -97,6 +99,21 @@ Changes are saved automatically (450 ms debounce) and pushed to open tabs:
 - Xcode 15 or later (built with Xcode 27.1 for this project)
 - Safari 16.4 or later
 
+### Direct download (preview)
+
+[Download Safari Translator 1.0.0 DMG](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
+
+The current release is signed with an `Apple Development` certificate and is **not notarized by Apple**. On first launch, if macOS says it cannot verify the developer:
+
+- Right-click **Safari Translator** in Applications → **Open** → **Open** again; or
+- Run:
+
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Safari Translator.app"
+  ```
+
+> This is a preview build. A double-click-to-open experience with no security prompt requires a paid Apple Developer Program membership, a `Developer ID Application` certificate, and Apple notarization; see “Signing, notarization and the DMG” below.
+
 ### Build from source
 
 1. Open the project:
@@ -138,7 +155,7 @@ This produces an unsigned `build/products/Debug/Safari Translator.app` and is on
 
 ### Signing, notarization and the DMG
 
-> Public distribution requires a **paid Apple Developer Program** membership, a `Developer ID Application` certificate, and Apple notarization. A free Personal Team only provides an `Apple Development` certificate, which works for local debugging but **cannot be notarized or opened directly on other Macs**.
+> A double-click-to-open experience with no Gatekeeper prompt requires a **paid Apple Developer Program** membership, a `Developer ID Application` certificate, and Apple notarization. The current GitHub release is a preview signed with an `Apple Development` certificate; it is not notarized and needs the first-launch steps above. Use this section to produce a proper distribution build.
 
 1. In Xcode → Settings → Accounts → Manage Certificates, create a **Developer ID Application** certificate, or import an existing `.p12`.
 2. Store notarization credentials in a keychain profile (use an app-specific password, not your Apple ID password):
@@ -159,7 +176,7 @@ This produces an unsigned `build/products/Debug/Safari Translator.app` and is on
    npm run release:dmg
    ```
 
-The script signs the app and embedded `.appex`, notarizes and staples the app, creates and signs the DMG, notarizes and staples the DMG, and writes the DMG plus its SHA-256 to `dist/`. Set `NOTARIZE=0` for a local-only signed build, but such a build is not suitable for distribution.
+The script signs the app and embedded `.appex`, notarizes and staples the app, creates and signs the DMG, notarizes and staples the DMG, and writes the DMG plus its SHA-256 to `dist/`. Set `NOTARIZE=0` for a local-only signed build, but it will still be blocked by Gatekeeper and is only suitable as a preview.
 
 ### Regenerating the Xcode project
 
