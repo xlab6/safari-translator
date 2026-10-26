@@ -146,7 +146,7 @@
       });
     }
 
-    if (message.type === 'pt:ping') return { ok: true, version: '1.0.4', demo: true };
+    if (message.type === 'pt:ping') return { ok: true, version: '1.0.5', demo: true };
 
     return { ok: false, error: { code: 'request', message: '演示模式不支持：' + message.type } };
   }

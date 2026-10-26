@@ -6,6 +6,7 @@ A native Safari Web Extension (Manifest V2) that translates **only when you ask 
 
 - Select text → a floating **翻译** (Translate) button appears next to the selection
 - Right-click → translate the selection, translate the whole page using the saved mode, or restore the original
+- Whole-page translation handles the visible viewport first and fills in offscreen content in the background
 - Works with Microsoft Translator, Alibaba Cloud, Tencent Cloud, DeepL, LibreTranslate, OpenAI-compatible APIs, plus keyless MyMemory and Google Translate
 - All network requests are made by the background page; content scripts only read the page and render results
 
@@ -62,6 +63,7 @@ The menu appears on web content only, not on Safari internal pages or extension 
 - **Replace mode** swaps text nodes in place and can be restored
 - Replace mode is the default; switch to bilingual mode in Settings. Both the context menu and the toolbar popup follow this setting.
 - Skips `script`, `style`, `code`, `pre`, `textarea`, editable regions, hidden elements, and already translated nodes
+- Translates the visible viewport first, then fills in offscreen content in the background (~450 ms later); nearby blocks are promoted as you scroll
 - Batches 8 units / 2,600 characters, with up to 3 concurrent requests; shows progress and a Cancel button
 - Processes at most 400 blocks or 700 text nodes per run
 - Reuses translations for repeated strings; failures leave the original text untouched

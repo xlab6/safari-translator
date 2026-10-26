@@ -24,6 +24,8 @@
   var MAX_TEXT_NODES = 700;
   var BATCH_SIZE = 8;
   var BATCH_CHARS = 2600;
+  var VIEWPORT_MARGIN = 240;
+  var BACKGROUND_DELAY = 450;
   var FATAL_CODES = { auth: 1, config: 1, quota: 1, lang: 1 };
 
   var SKIP_SELECTOR = [
@@ -62,7 +64,10 @@
       added: [],
       originals: new Map(),
       total: 0,
-      done: 0
+      done: 0,
+      visible: 0,
+      offscreen: 0,
+      observer: null
     }
   };
 
@@ -1130,22 +1135,156 @@
     return units;
   }
 
-  function groupUnits(units) {
-    var groups = [];
-    var current = [];
+  function unitElement(unit) {
+    if (unit.element) return unit.element;
+    return unit.node && unit.node.parentElement;
+  }
+
+  function unitRect(unit) {
+    // In replace mode the unit is a text node, which can sit inside a very
+    // tall container. A Range gives the text's own position, not the whole
+    // container's.
+    if (unit.node && unit.node.nodeType === 3 && document.createRange) {
+      try {
+        var range = document.createRange();
+        range.selectNodeContents(unit.node);
+        if (typeof range.getBoundingClientRect === 'function') {
+          var textRect = range.getBoundingClientRect();
+          if (textRect && (textRect.width || textRect.height || textRect.top || textRect.bottom)) {
+            return textRect;
+          }
+        }
+      } catch (e) { /* fall back to the parent element */ }
+    }
+
+    var element = unitElement(unit);
+    if (!element || !element.getBoundingClientRect) return null;
+    try {
+      return element.getBoundingClientRect();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isInViewport(unit) {
+    var rect = unitRect(unit);
+    if (!rect) return true;
+
+    // jsdom and detached nodes report an all-zero rect. Keep those in the
+    // first pass instead of stranding them in the background queue.
+    if (!rect.width && !rect.height && !rect.top && !rect.bottom) return true;
+
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (!viewportHeight) return true;
+    return rect.bottom >= -VIEWPORT_MARGIN && rect.top <= viewportHeight + VIEWPORT_MARGIN;
+  }
+
+  function createQueue() {
+    return { items: [], cursor: 0 };
+  }
+
+  function nextFromQueue(queue, wantedState) {
+    while (queue.cursor < queue.items.length) {
+      var unit = queue.items[queue.cursor];
+      if (unit.state === wantedState) return { unit: unit, queue: queue };
+      queue.cursor++;
+    }
+    return null;
+  }
+
+  function hasPending(queue, wantedState) {
+    for (var i = queue.cursor; i < queue.items.length; i++) {
+      if (queue.items[i].state === wantedState) return true;
+    }
+    return false;
+  }
+
+  function takeBatch(visibleQueue, nearQueue, offscreenQueue, allowOffscreen) {
+    var batch = [];
     var chars = 0;
 
+    while (batch.length < BATCH_SIZE) {
+      var found = nextFromQueue(visibleQueue, 'visible');
+      if (!found) found = nextFromQueue(nearQueue, 'near');
+      if (!found && allowOffscreen) found = nextFromQueue(offscreenQueue, 'pending');
+      if (!found) break;
+
+      // Keep the existing batch limits, but never split a single long unit.
+      if (batch.length && chars + found.unit.text.length > BATCH_CHARS) break;
+
+      found.queue.cursor += 1;
+      found.unit.state = 'sending';
+      batch.push(found.unit);
+      chars += found.unit.text.length;
+    }
+
+    return batch;
+  }
+
+  function delay(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  function stopVisibilityObserver(page) {
+    if (!page.observer) return;
+    try { page.observer.disconnect(); } catch (e) { /* ignore */ }
+    page.observer = null;
+  }
+
+  function startVisibilityObserver(units, nearQueue, offscreenQueue, runId) {
+    var Observer = window.IntersectionObserver;
+    if (typeof Observer !== 'function' || !units.length) return null;
+
+    var elements = new Map();
+    var observer;
+
+    try {
+      observer = new Observer(function (entries) {
+        if (state.page.runId !== runId) return;
+        entries.forEach(function (entry) {
+          var group = elements.get(entry.target);
+          if (!group) return;
+
+          group.forEach(function (unit) {
+            if (entry.isIntersecting) {
+              // A unit already sent, or already promoted by another callback,
+              // is left alone; this keeps the queues free of duplicates.
+              if (unit.state !== 'pending') return;
+              unit.state = 'near';
+              nearQueue.items.push(unit);
+              return;
+            }
+
+            // If the reader scrolls away before an initially visible unit is
+            // sent, demote it so text they can actually see goes first.
+            if (unit.state === 'visible') {
+              unit.state = 'pending';
+              offscreenQueue.items.push(unit);
+            }
+          });
+        });
+      }, {
+        root: null,
+        rootMargin: VIEWPORT_MARGIN + 'px 0px ' + VIEWPORT_MARGIN + 'px 0px',
+        threshold: 0
+      });
+    } catch (e) {
+      return null;
+    }
+
     units.forEach(function (unit) {
-      if (current.length && (current.length >= BATCH_SIZE || chars + unit.text.length > BATCH_CHARS)) {
-        groups.push(current);
-        current = [];
-        chars = 0;
+      var element = unitElement(unit);
+      if (!element) return;
+      var group = elements.get(element);
+      if (!group) {
+        group = [];
+        elements.set(element, group);
+        try { observer.observe(element); } catch (e) { /* ignore */ }
       }
-      current.push(unit);
-      chars += unit.text.length;
+      group.push(unit);
     });
-    if (current.length) groups.push(current);
-    return groups;
+
+    return observer;
   }
 
   /* ------------------------------------------------------------------ *
@@ -1195,7 +1334,7 @@
     if (noteEl) noteEl.textContent = note || '';
   }
 
-  function showProgress(total) {
+  function showProgress(total, note) {
     var progress = q('progress');
     progress.hidden = false;
     q('spinner').style.display = '';
@@ -1205,7 +1344,7 @@
       cancel.textContent = '取消';
       cancel.disabled = false;
     }
-    updateProgress(0, total, '');
+    updateProgress(0, total, note || '');
   }
 
   function hideProgress() {
@@ -1259,24 +1398,58 @@
     page.mode = mode || 'replace';
     page.total = units.length;
     page.done = 0;
+    page.visible = 0;
+    page.offscreen = 0;
     page.added = [];
     page.originals = new Map();
+    stopVisibilityObserver(page);
 
-    showProgress(units.length);
+    var visibleQueue = createQueue();
+    var nearQueue = createQueue();
+    var offscreenQueue = createQueue();
 
-    var groups = groupUnits(units);
+    units.forEach(function (unit) {
+      if (isInViewport(unit)) {
+        unit.state = 'visible';
+        visibleQueue.items.push(unit);
+      } else {
+        unit.state = 'pending';
+        offscreenQueue.items.push(unit);
+      }
+    });
+
+    page.visible = visibleQueue.items.length;
+    page.offscreen = offscreenQueue.items.length;
+    page.observer = startVisibilityObserver(units, nearQueue, offscreenQueue, runId);
+
+    showProgress(units.length, page.offscreen ? '优先翻译可视区' : '');
+
+    var backgroundReady = false;
     var done = 0;
     var failed = 0;
     var fatal = null;
 
-    for (var g = 0; g < groups.length; g++) {
-      if (page.cancelled || page.runId !== runId) break;
+    while (!page.cancelled && page.runId === runId) {
+      var batch = takeBatch(visibleQueue, nearQueue, offscreenQueue, backgroundReady);
+
+      if (!batch.length) {
+        // Give the reader a moment to scroll before spending requests on
+        // content they may never look at. Once that window passes, translate
+        // the remainder in the background so the whole page still completes.
+        if (!backgroundReady && hasPending(offscreenQueue, 'pending')) {
+          updateProgress(done + failed, units.length, '可视区已完成，后台继续');
+          await delay(BACKGROUND_DELAY);
+          backgroundReady = true;
+          continue;
+        }
+        break;
+      }
 
       var response = null;
       try {
         response = await send({
           type: 'translateBatch',
-          texts: groups[g].map(function (unit) { return unit.text; }),
+          texts: batch.map(function (unit) { return unit.text; }),
           from: state.settings.sourceLang,
           to: target
         }, 120000);
@@ -1293,9 +1466,9 @@
       }
 
       var results = response.results || [];
-      for (var i = 0; i < groups[g].length; i++) {
+      for (var i = 0; i < batch.length; i++) {
         if (page.cancelled || page.runId !== runId) break;
-        var unit = groups[g][i];
+        var unit = batch[i];
         var result = results[i];
 
         if (result && result.ok && result.text) {
@@ -1312,13 +1485,17 @@
         }
       }
 
-      updateProgress(done + failed, units.length, failed ? failed + ' 段失败' : '');
+      var note = failed ? failed + ' 段失败' : '';
+      if (!note && hasPending(visibleQueue, 'visible')) note = '优先翻译可视区';
+      if (!note && backgroundReady) note = '可视区已完成，后台继续';
+      updateProgress(done + failed, units.length, note);
       if (fatal) break;
     }
 
     // A restore or a newer run has taken over the page/UI.
     if (page.runId !== runId) return;
 
+    stopVisibilityObserver(page);
     page.running = false;
     page.done = done;
 
@@ -1361,6 +1538,7 @@
     page.cancelled = true;
     page.running = false;
     page.runId++;
+    stopVisibilityObserver(page);
 
     page.added.forEach(function (span) {
       try { span.remove(); } catch (e) { /* ignore */ }
@@ -1378,6 +1556,8 @@
     page.status = 'idle';
     page.total = 0;
     page.done = 0;
+    page.visible = 0;
+    page.offscreen = 0;
 
     hideProgress();
 

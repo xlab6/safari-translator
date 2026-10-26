@@ -271,6 +271,92 @@ test('bilingual page translation appends translations and skips code/script/hidd
   assert.match(role(page, 'toast-text').textContent, /已完成 4 段翻译/);
 });
 
+test('page translation sends visible blocks first and catches up offscreen blocks', async () => {
+  const html = '<article><p id="top">Visible English paragraph</p><p id="below">Offscreen English paragraph</p></article>';
+  const page = await contentPage({ html });
+
+  const rect = (top) => ({
+    left: 0, top, right: 300, bottom: top + 40, width: 300, height: 40, x: 0, y: top
+  });
+  page.window.Element.prototype.getBoundingClientRect = function () {
+    if (this.id === 'below') return rect(2400);
+    if (this.id === 'top') return rect(20);
+    return rect(0);
+  };
+
+  const run = page.content.translatePage('bilingual');
+  await waitFor(
+    () => page.browser.sent.filter((message) => message.type === 'translateBatch').length === 1,
+    800,
+    'first batch sent'
+  );
+
+  const first = page.browser.sent.find((message) => message.type === 'translateBatch');
+  assert.deepEqual([...first.texts], ['Visible English paragraph'], 'visible text is sent first');
+  assert.match(role(page, 'progress-note').textContent, /优先翻译可视区/);
+
+  const state = page.content.getState().page;
+  assert.equal(state.visible, 1);
+  assert.equal(state.offscreen, 1);
+
+  await run;
+
+  const batches = page.browser.sent.filter((message) => message.type === 'translateBatch');
+  assert.equal(batches.length, 2, 'offscreen text is translated after the visible pass');
+  assert.deepEqual([...batches[1].texts], ['Offscreen English paragraph']);
+  assert.equal(
+    page.window.document.querySelector('#below [data-pt-translation]').textContent,
+    '[译]Offscreen English paragraph'
+  );
+});
+
+test('an offscreen block promoted into view jumps ahead of the background pass', async () => {
+  const html = '<article><p id="top">Visible English paragraph</p><p id="below">Offscreen English paragraph</p></article>';
+  const io = { callback: null, targets: [], disconnected: false };
+  let triggered = false;
+  let page;
+
+  page = await contentPage({
+    html,
+    respond: (message) => {
+      if (message.type === 'translateBatch' && !triggered) {
+        triggered = true;
+        io.callback([
+          { target: page.window.document.getElementById('below'), isIntersecting: true }
+        ]);
+      }
+      return { ok: true, results: batchEcho(message.texts) };
+    }
+  });
+
+  const rect = (top) => ({
+    left: 0, top, right: 300, bottom: top + 40, width: 300, height: 40, x: 0, y: top
+  });
+  page.window.Element.prototype.getBoundingClientRect = function () {
+    if (this.id === 'below') return rect(2400);
+    if (this.id === 'top') return rect(20);
+    return rect(0);
+  };
+
+  page.window.IntersectionObserver = function (callback) {
+    io.callback = callback;
+  };
+  page.window.IntersectionObserver.prototype.observe = function (element) {
+    io.targets.push(element);
+  };
+  page.window.IntersectionObserver.prototype.disconnect = function () {
+    io.disconnected = true;
+  };
+
+  await page.content.translatePage('bilingual');
+
+  const batches = page.browser.sent.filter((message) => message.type === 'translateBatch');
+  assert.deepEqual([...batches[0].texts], ['Visible English paragraph']);
+  assert.deepEqual([...batches[1].texts], ['Offscreen English paragraph'], 'promoted block is sent next');
+  assert.ok(io.targets.some((element) => element.id === 'below'), 'offscreen block is observed');
+  assert.equal(io.disconnected, true, 'observer is cleaned up when the run ends');
+});
+
 test('restoring a bilingual page removes every inserted node', async () => {
   const page = await contentPage();
   await page.content.translatePage('bilingual');
