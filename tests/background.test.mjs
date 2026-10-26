@@ -208,7 +208,7 @@ test('ping and unknown requests answer through sendResponse', async () => {
   const { fixture } = setup();
   const ping = await dispatch(fixture, { __pt: true, type: 'pt:ping' });
   assert.equal(ping.response.ok, true);
-  assert.equal(ping.response.version, '1.0.0');
+  assert.equal(ping.response.version, '1.0.1');
 
   const unknown = await dispatch(fixture, { __pt: true, type: 'pt:whatever' });
   assert.equal(unknown.response.ok, false);

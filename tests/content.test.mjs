@@ -72,6 +72,12 @@ function mouseUp(page, x = 150, y = 120) {
   );
 }
 
+function mouseDown(page, x = 300, y = 300) {
+  page.window.document.body.dispatchEvent(
+    new page.window.MouseEvent('mousedown', { bubbles: true, button: 0, clientX: x, clientY: y })
+  );
+}
+
 test('the content script boots without translating anything', async () => {
   const page = await contentPage();
   assert.ok(page.window.document.querySelector('[data-pt-ui]'), 'UI host is injected');
@@ -195,6 +201,36 @@ test('Escape closes the panel', async () => {
   await waitFor(() => role(page, 'panel').classList.contains('pt-open'), 800, 'panel open');
 
   page.window.document.dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(role(page, 'panel').classList.contains('pt-open'), false);
+});
+
+test('clicking outside dismisses the selection button and the panel', async () => {
+  const page = await contentPage();
+  selectNodeText(page.window, page.window.document.getElementById('first'));
+  mouseUp(page);
+  await waitFor(() => role(page, 'selection').style.display === 'flex', 500, 'button visible');
+
+  mouseDown(page);
+  assert.equal(role(page, 'selection').style.display, 'none');
+
+  await page.content.translateSelection('Hello world', { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 });
+  await waitFor(() => role(page, 'panel').classList.contains('pt-open'), 800, 'panel open');
+
+  role(page, 'panel').dispatchEvent(
+    new page.window.MouseEvent('mousedown', { bubbles: true, composed: true, button: 0, clientX: 50, clientY: 50 })
+  );
+  assert.equal(role(page, 'panel').classList.contains('pt-open'), true, 'clicks inside the panel do not dismiss it');
+
+  mouseDown(page);
+  assert.equal(role(page, 'panel').classList.contains('pt-open'), false);
+});
+
+test('losing window focus closes the selection panel', async () => {
+  const page = await contentPage();
+  await page.content.translateSelection('Hello world', { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 });
+  await waitFor(() => role(page, 'panel').classList.contains('pt-open'), 800, 'panel open');
+
+  page.window.dispatchEvent(new page.window.Event('blur'));
   assert.equal(role(page, 'panel').classList.contains('pt-open'), false);
 });
 

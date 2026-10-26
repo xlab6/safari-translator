@@ -101,7 +101,7 @@
 
 ### 直接下载（预览版）
 
-[下载 Safari Translator 1.0.0 DMG](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
+[下载最新版 Safari Translator DMG](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
 
 当前发布包使用 `Apple Development` 证书签名，**未经过 Apple 公证**。首次打开如果提示“无法验证开发者”：
 

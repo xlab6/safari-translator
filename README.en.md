@@ -101,7 +101,7 @@ Changes are saved automatically (450 ms debounce) and pushed to open tabs:
 
 ### Direct download (preview)
 
-[Download Safari Translator 1.0.0 DMG](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
+[Download the latest Safari Translator DMG](https://github.com/xlab6/safari-translator/releases/latest/download/Safari-Translator.dmg)
 
 The current release is signed with an `Apple Development` certificate and is **not notarized by Apple**. On first launch, if macOS says it cannot verify the developer:
 

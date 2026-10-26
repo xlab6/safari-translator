@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Safari Translator — 网页翻译",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "划词翻译与网页双语对照翻译，支持微软 Azure、阿里云、腾讯云、DeepL、Google 等翻译服务。Select text or translate a whole page with the provider you trust.",
   "permissions": [
     "storage",

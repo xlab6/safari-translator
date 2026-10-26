@@ -957,6 +957,11 @@
     if (state.button) state.button.style.display = 'none';
   }
 
+  function dismissSelectionUI() {
+    hideSelectionButton();
+    if (state.panel && state.panel.classList.contains('pt-open')) closePanel();
+  }
+
   function onMouseUp(event) {
     if (event.button !== 0) return;
     if (isEventInsideUI(event)) return;
@@ -973,7 +978,7 @@
   function onMouseDown(event) {
     state.lastPoint = { x: event.clientX, y: event.clientY };
     if (isEventInsideUI(event)) return;
-    hideSelectionButton();
+    dismissSelectionUI();
   }
 
   function onKeyUp(event) {
@@ -1469,10 +1474,16 @@
     }, true);
 
     document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape') {
-        if (state.panel.classList.contains('pt-open')) closePanel();
-        hideSelectionButton();
-      }
+      if (event.key === 'Escape') dismissSelectionUI();
+    }, true);
+
+    window.addEventListener('blur', dismissSelectionUI);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) dismissSelectionUI();
+    });
+    document.addEventListener('focusin', function (event) {
+      if (isEventInsideUI(event)) return;
+      dismissSelectionUI();
     }, true);
 
     if (window.matchMedia) {

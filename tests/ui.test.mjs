@@ -103,7 +103,7 @@ test('the popup renders the current provider, language and version', async () =>
   assert.equal($(page, 'target').value, 'ja');
   assert.ok($(page, 'target').options.length >= 30);
   assert.equal($(page, 'selection-toggle').checked, false);
-  assert.equal($(page, 'version').textContent, 'v1.0.0');
+  assert.equal($(page, 'version').textContent, 'v1.0.1');
 });
 
 test('the popup translates the page in the chosen mode', async () => {
@@ -242,7 +242,7 @@ test('the options page lists every provider with the current one selected', asyn
       'Tencent Cloud', 'DeepL', 'LibreTranslate', 'OpenAI Compatible'
     ]
   );
-  assert.equal($(page, 'version').textContent, '1.0.0 · macOS Safari');
+  assert.equal($(page, 'version').textContent, '1.0.1 · macOS Safari');
   assert.match($(page, 'fields').textContent, /无需填写密钥/);
 });
 
