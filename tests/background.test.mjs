@@ -115,14 +115,13 @@ function click(fixture, info, tab) {
   fixture.clickListeners.forEach((fn) => fn(info, tab));
 }
 
-test('context menus are created with explicit translate entries', async () => {
+test('context menus expose a single page translation entry', async () => {
   const { fixture, api } = setup();
-  await waitFor(() => fixture.created.length >= 7, 1500, 'menus created');
+  await waitFor(() => fixture.created.length >= 6, 1500, 'menus created');
 
   assert.deepEqual({ ...api.MENU }, {
     selection: 'pt-translate-selection',
-    bilingual: 'pt-translate-page-bilingual',
-    replace: 'pt-translate-page-replace',
+    page: 'pt-translate-page',
     restore: 'pt-restore-page',
     options: 'pt-options'
   });
@@ -131,8 +130,7 @@ test('context menus are created with explicit translate entries', async () => {
   assert.deepEqual(ids, [
     'pt-translate-selection',
     'pt-sep-1',
-    'pt-translate-page-bilingual',
-    'pt-translate-page-replace',
+    'pt-translate-page',
     'pt-restore-page',
     'pt-sep-2',
     'pt-options'
@@ -142,18 +140,18 @@ test('context menus are created with explicit translate entries', async () => {
   assert.equal(selection.title, '翻译所选文字');
   assert.deepEqual(Array.from(selection.contexts), ['selection']);
 
-  const bilingual = fixture.created[2];
-  assert.match(bilingual.title, /双语/);
+  const page = fixture.created[2];
+  assert.equal(page.title, '翻译此页面');
   assert.deepEqual(
-    Array.from(bilingual.contexts),
+    Array.from(page.contexts),
     ['page', 'selection', 'link', 'image', 'video', 'audio', 'editable'],
     'page actions also work on links and images'
   );
 
-  const replace = fixture.created[3];
-  assert.match(replace.title, /替换/);
+  const restore = fixture.created[3];
+  assert.equal(restore.title, '还原原文');
 
-  const options = fixture.created[6];
+  const options = fixture.created[5];
   assert.equal(Array.from(options.contexts).length, 7);
 });
 
@@ -171,23 +169,27 @@ test('selection menu click forwards normalised text to the tab', async () => {
   );
 });
 
-test('page menu clicks request bilingual, replace and restore', async () => {
+test('the page menu translates with the saved default mode', async () => {
   const { fixture } = setup();
   await waitFor(() => fixture.clickListeners.length === 1, 1000, 'menu listener');
 
-  click(fixture, { menuItemId: 'pt-translate-page-bilingual' }, { id: 3 });
-  await wait(20);
-  click(fixture, { menuItemId: 'pt-translate-page-replace' }, { id: 3 });
-  await wait(20);
+  click(fixture, { menuItemId: 'pt-translate-page' }, { id: 3 });
+  await wait(50);
+  assert.equal(fixture.sentToTabs[0].tabId, 3);
+  assert.equal(fixture.sentToTabs[0].message.type, 'pt:translate-page');
+  assert.equal(fixture.sentToTabs[0].message.mode, 'replace');
+
+  await fixture.storage.local.set({
+    settings: { provider: 'mymemory', targetLang: 'zh-CN', pageMode: 'bilingual' }
+  });
+
+  click(fixture, { menuItemId: 'pt-translate-page' }, { id: 3 });
+  await wait(50);
+  assert.equal(fixture.sentToTabs[1].message.mode, 'bilingual');
+
   click(fixture, { menuItemId: 'pt-restore-page' }, { id: 3 });
   await wait(20);
-
-  assert.deepEqual(
-    fixture.sentToTabs.map((call) => call.message.type),
-    ['pt:translate-page', 'pt:translate-page', 'pt:restore-page']
-  );
-  assert.equal(fixture.sentToTabs[0].message.mode, 'bilingual');
-  assert.equal(fixture.sentToTabs[1].message.mode, 'replace');
+  assert.equal(fixture.sentToTabs[2].message.type, 'pt:restore-page');
 });
 
 test('the options menu entry opens the options page without a tab', async () => {
@@ -213,7 +215,7 @@ test('ping and unknown requests answer through sendResponse', async () => {
   const { fixture } = setup();
   const ping = await dispatch(fixture, { __pt: true, type: 'pt:ping' });
   assert.equal(ping.response.ok, true);
-  assert.equal(ping.response.version, '1.0.3');
+  assert.equal(ping.response.version, '1.0.4');
 
   const unknown = await dispatch(fixture, { __pt: true, type: 'pt:whatever' });
   assert.equal(unknown.response.ok, false);

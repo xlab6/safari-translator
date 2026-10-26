@@ -5,7 +5,7 @@ A native Safari Web Extension (Manifest V2) that translates **only when you ask 
 > This is an independent project, not affiliated with Apple Inc. “Safari” is a trademark of Apple Inc., used here only to identify the host browser.
 
 - Select text → a floating **翻译** (Translate) button appears next to the selection
-- Right-click → translate the selection, translate the whole page bilingually, replace the page text, or restore the original
+- Right-click → translate the selection, translate the whole page using the saved mode, or restore the original
 - Works with Microsoft Translator, Alibaba Cloud, Tencent Cloud, DeepL, LibreTranslate, OpenAI-compatible APIs, plus keyless MyMemory and Google Translate
 - All network requests are made by the background page; content scripts only read the page and render results
 
@@ -50,8 +50,7 @@ Right-click anywhere on a page:
 | Menu item (Chinese UI) | Action |
 | --- | --- |
 | 翻译所选文字 | Translate the current selection |
-| 翻译此页面（双语对照） | Keep the original and insert translations below each block |
-| 翻译此页面（替换原文） | Replace page text with translations |
+| 翻译此页面 | Translate the page using the saved default mode (replace by default) |
 | 还原原文 | Remove inserted translations or restore replaced text |
 | 翻译设置… | Open the options page |
 
@@ -61,7 +60,7 @@ The menu appears on web content only, not on Safari internal pages or extension 
 
 - **Bilingual mode** inserts a translated block under each paragraph, with a subtle left rule
 - **Replace mode** swaps text nodes in place and can be restored
-- Replace mode is the default; switch to bilingual mode in Settings
+- Replace mode is the default; switch to bilingual mode in Settings. Both the context menu and the toolbar popup follow this setting.
 - Skips `script`, `style`, `code`, `pre`, `textarea`, editable regions, hidden elements, and already translated nodes
 - Batches 8 units / 2,600 characters, with up to 3 concurrent requests; shows progress and a Cancel button
 - Processes at most 400 blocks or 700 text nodes per run
@@ -207,9 +206,10 @@ You can also select text and choose **翻译所选文字** from the context menu
 
 ### Translate a page
 
-- Right-click → **翻译此页面（双语对照）** to keep the original and insert translations.
-- Right-click → **翻译此页面（替换原文）** to replace the text.
+- Right-click → **翻译此页面** to translate the page using the saved default mode.
 - Right-click → **还原原文** to restore the page.
+
+To use the other mode, click the alternate button in the toolbar popup or change the default in Settings. Both modes can be restored at any time.
 
 A progress bar with a Cancel button appears at the bottom-right. Translations do not survive a page reload.
 
@@ -520,6 +520,7 @@ jsdom is resolved from `PT_JSDOM` or a sibling project's `node_modules/jsdom`.
 | --- | --- | --- |
 | Safari Translator is missing from Safari extensions | App never launched, unsigned, or Safari too old | Run a signed build from Xcode; check macOS/Safari versions; reopen Safari settings |
 | No translation items in the context menu | Extension disabled, page is not http/https, or site access denied | Enable it in Safari settings; allow the site; reload the page |
+| The old two page-translation entries remain after updating | Safari cached the old extension | Quit Safari completely (⌘Q) and reopen it; if that fails, disable and re-enable Safari Translator in Safari settings |
 | No floating button after selecting text | Selection button disabled, selection over 5,000 chars, or page blocks scripts | Check the setting; use the context menu; reload |
 | “翻译服务未配置” | The selected provider needs a key | Open settings → provider configuration, enter the key, test the connection |
 | “密钥无效或权限不足” | Wrong key/region or insufficient permissions | Check Key/Region and sub-account permissions; Azure multi-region resources require a region |

@@ -17,8 +17,7 @@
 
   var MENU = {
     selection: 'pt-translate-selection',
-    bilingual: 'pt-translate-page-bilingual',
-    replace: 'pt-translate-page-replace',
+    page: 'pt-translate-page',
     restore: 'pt-restore-page',
     options: 'pt-options'
   };
@@ -156,13 +155,8 @@
         });
         createMenu({ id: 'pt-sep-1', type: 'separator', contexts: PAGE_CONTEXTS });
         createMenu({
-          id: MENU.bilingual,
-          title: '翻译此页面（双语对照）',
-          contexts: PAGE_CONTEXTS
-        });
-        createMenu({
-          id: MENU.replace,
-          title: '翻译此页面（替换原文）',
+          id: MENU.page,
+          title: '翻译此页面',
           contexts: PAGE_CONTEXTS
         });
         createMenu({
@@ -304,14 +298,13 @@
         });
         return;
       }
-      if (id === MENU.bilingual) {
-        translateTab(tab.id, 'bilingual').catch(function (error) {
-          console.warn('[Safari Translator] 页面翻译失败：', error);
-        });
-        return;
-      }
-      if (id === MENU.replace) {
-        translateTab(tab.id, 'replace').catch(function (error) {
+      if (id === MENU.page) {
+        Promise.resolve().then(function () {
+          return PT.loadSettings();
+        }).then(function (settings) {
+          var mode = PT.normalizeSettings(settings).pageMode;
+          return translateTab(tab.id, mode);
+        }).catch(function (error) {
           console.warn('[Safari Translator] 页面翻译失败：', error);
         });
         return;
