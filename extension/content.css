@@ -1,0 +1,29 @@
+/*
+ * Safari Translator — page-level fallback styles.
+ *
+ * The injected UI lives in a shadow root with its own stylesheet, so this file
+ * only carries the rules that must apply to nodes living in the page itself.
+ * Inline styles are still set on translation nodes; these rules are a safety
+ * net for pages that strip inline styles.
+ */
+
+[data-pt-translation] {
+  display: block !important;
+  margin: 0.35em 0 0 !important;
+  padding: 0 0 0 0.65em !important;
+  border-left: 2px solid rgba(47, 107, 255, 0.55) !important;
+  color: inherit !important;
+  font: inherit !important;
+  font-size: 0.94em !important;
+  line-height: inherit !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  opacity: 0.94 !important;
+  text-align: inherit !important;
+}
+
+@media print {
+  [data-pt-ui] {
+    display: none !important;
+  }
+}

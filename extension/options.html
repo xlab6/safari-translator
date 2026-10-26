@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>网页翻译 · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">文</span>
+        <div class="brand-text">
+          <h1>网页翻译设置</h1>
+          <p>Safari Translator · Safari 扩展</p>
+        </div>
+      </div>
+      <span class="save-state" id="save-state" data-tone="muted">已保存</span>
+    </header>
+
+    <main>
+      <section class="card">
+        <div class="card-head">
+          <h2>翻译服务</h2>
+          <p>划词翻译与页面翻译都会使用这里选择的服务。密钥只保存在本机浏览器存储中。</p>
+        </div>
+        <div class="providers" id="providers" role="radiogroup" aria-label="翻译服务"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>服务配置</h2>
+          <p id="config-desc"></p>
+        </div>
+        <div class="fields" id="fields"></div>
+        <div class="config-foot">
+          <a class="docs" id="docs-link" target="_blank" rel="noreferrer">查看服务文档 ↗</a>
+          <button class="btn" id="test" type="button">测试翻译</button>
+        </div>
+        <div class="test-result" id="test-result" hidden></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>语言</h2>
+          <p>源语言选择“自动检测”时，由翻译服务或扩展判断原文语言。</p>
+        </div>
+        <div class="grid2">
+          <label class="field">
+            <span>源语言</span>
+            <select id="source-lang"></select>
+          </label>
+          <label class="field">
+            <span>目标语言</span>
+            <select id="target-lang"></select>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>页面翻译</h2>
+          <p>右键菜单与工具栏弹窗都遵循这里的默认方式。</p>
+        </div>
+        <div class="modes" id="modes">
+          <button class="mode" type="button" data-mode="bilingual">
+            <span class="mode-title">双语对照</span>
+            <span class="mode-desc">在原文下方插入译文，保留原文</span>
+          </button>
+          <button class="mode" type="button" data-mode="replace">
+            <span class="mode-title">替换原文</span>
+            <span class="mode-desc">直接替换页面文字，可随时还原</span>
+          </button>
+        </div>
+        <div class="rows">
+          <label class="row" for="selection-button">
+            <span class="row-text">
+              <strong>划词翻译按钮</strong>
+              <small>选中文字后显示浮动“翻译”按钮</small>
+            </span>
+            <input type="checkbox" id="selection-button">
+            <i aria-hidden="true"></i>
+          </label>
+          <label class="row" for="theme">
+            <span class="row-text">
+              <strong>外观</strong>
+              <small>浮动按钮与结果面板的配色</small>
+            </span>
+            <select id="theme">
+              <option value="auto">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="card security">
+        <div class="card-head">
+          <h2>隐私与安全</h2>
+        </div>
+        <p class="security-lead">翻译密钥以明文形式保存在 Safari 的扩展本地存储中，不会上传到本扩展以外的服务器。</p>
+        <ul class="security-list">
+          <li>只有你选择的翻译服务会收到原文；页面内容不会被发送到其他地方。</li>
+          <li>共享 Mac 或使用公共电脑时，建议不要保存长期密钥，或用完即清除。</li>
+          <li>密钥只用于向对应服务发起翻译请求，扩展作者无法读取。</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>其他</h2>
+        </div>
+        <div class="rows">
+          <div class="row static">
+            <span class="row-text">
+              <strong>恢复默认设置</strong>
+              <small>会清除已保存的服务密钥，操作不可撤销</small>
+            </span>
+            <button class="btn danger" id="reset" type="button">恢复默认</button>
+          </div>
+          <div class="row static">
+            <span class="row-text">
+              <strong>版本</strong>
+              <small id="version">—</small>
+            </span>
+            <span class="version-tag">Safari Web Extension</span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="bottom">
+      <span>设置会自动保存。</span>
+      <span>Safari Translator</span>
+    </footer>
+  </div>
+
+  <script src="common.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

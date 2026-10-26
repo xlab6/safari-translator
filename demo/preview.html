@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Safari Translator — 功能演示</title>
+  <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+  <header class="demo-bar">
+    <div class="demo-brand">
+      <span class="demo-logo">译</span>
+      <span>
+        <strong>Safari Translator</strong>
+        <small>网页翻译扩展 · 交互演示</small>
+      </span>
+    </div>
+
+    <div class="demo-actions">
+      <button type="button" data-action="select">① 显示划词按钮</button>
+      <button type="button" data-action="selection">② 翻译所选文字</button>
+      <button type="button" data-action="bilingual">双语对照</button>
+      <button type="button" data-action="replace">替换原文</button>
+      <button type="button" data-action="restore">还原原文</button>
+      <button type="button" data-action="close" class="ghost">关闭译文</button>
+    </div>
+
+    <p class="demo-note" id="demo-status">
+      演示使用本地词典模拟翻译，不会联网。安装扩展后，右键菜单才是真正的入口。
+    </p>
+  </header>
+
+  <main class="paper">
+    <article>
+      <p class="kicker">SCIENCE · 健康</p>
+      <h1>Why We Sleep: The Science of Rest</h1>
+      <p class="byline">By Ada Lin · 6 min read</p>
+
+      <p id="pick">
+        Sleep is not a waste of time. While we rest, the brain consolidates memories,
+        clears metabolic waste, and prepares for the day ahead.
+      </p>
+
+      <p>
+        For most of human history, sleep was treated as a passive shutdown. Modern
+        neuroscience tells a different story: the sleeping brain is busy, cycling
+        through carefully staged patterns that keep the body and mind working.
+      </p>
+
+      <h2>What happens during a night of sleep</h2>
+
+      <p>A full night consists of four to six cycles. Each cycle moves through light sleep, deep sleep, and REM sleep.</p>
+
+      <ul>
+        <li>Light sleep helps the body transition from wakefulness.</li>
+        <li>Deep sleep restores muscles and strengthens the immune system.</li>
+        <li>REM sleep supports learning and emotional processing.</li>
+      </ul>
+
+      <blockquote id="quote">
+        Sleep is the single most effective thing we can do to reset our brain and body health each day.
+      </blockquote>
+
+      <h2>Small changes that help</h2>
+
+      <p>
+        Keep a consistent schedule, dim the lights an hour before bed, and keep the
+        bedroom cool. Caffeine has a long half-life, so an afternoon coffee can still
+        be active at midnight.
+      </p>
+
+      <p>Code and formulas are skipped on purpose:</p>
+
+      <pre><code>const sleep = (ms) =&gt; new Promise((resolve) =&gt; setTimeout(resolve, ms));
+await sleep(8 * 60 * 60 * 1000);</code></pre>
+
+      <p>
+        If you struggle to fall asleep, get out of bed and read in dim light until you
+        feel drowsy. Try not to turn bedtime into a battle.
+      </p>
+
+      <h2>A note for readers</h2>
+      <p>
+        This page exists to demonstrate selection translation and bilingual page
+        translation. Nothing is translated until you explicitly ask for it.
+      </p>
+
+      <p class="signoff">— End of the demo article —</p>
+    </article>
+
+    <aside class="demo-help">
+      <h2>怎么试</h2>
+      <ol>
+        <li>选中任意一段文字，松开鼠标，出现「翻译」小按钮。</li>
+        <li>点击按钮，译文显示在浮动卡片里；可按 Esc 关闭。</li>
+        <li>用上方工具栏模拟右键菜单里的整页翻译与还原。</li>
+      </ol>
+      <p class="demo-warn">
+        演示页面的译文由内置词表生成，只用于展示交互，不代表真实翻译质量。
+      </p>
+    </aside>
+  </main>
+
+  <!-- Mock browser APIs first, then the unmodified extension scripts. -->
+  <script src="demo.js"></script>
+  <script src="../extension/common.js"></script>
+  <script src="../extension/content.js"></script>
+</body>
+</html>

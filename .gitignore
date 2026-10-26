@@ -1,0 +1,17 @@
+node_modules/
+.DS_Store
+
+# Xcode
+xcode/**/build/
+xcode/DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Test and OS noise
+*.log
+coverage/
+
+# Release artifacts
+dist/

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>网页翻译</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <header class="head">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">文</span>
+        <div class="brand-text">
+          <strong>网页翻译</strong>
+          <span>Safari Translator</span>
+        </div>
+      </div>
+      <button class="icon-btn" id="settings" type="button" title="翻译设置" aria-label="翻译设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>
+        </svg>
+      </button>
+    </header>
+
+    <button class="provider" id="provider" type="button" title="更改翻译服务">
+      <span class="provider-badge" id="provider-badge" data-tone="slate">M</span>
+      <span class="provider-text">
+        <span class="provider-label">翻译服务</span>
+        <strong id="provider-name">MyMemory</strong>
+      </span>
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    </button>
+
+    <label class="field" for="target">
+      <span>目标语言</span>
+      <select id="target"></select>
+    </label>
+
+    <div class="actions">
+      <button class="primary" id="translate-page" type="button">
+        <span>翻译此页面</span>
+        <small>双语对照</small>
+      </button>
+      <div class="secondary">
+        <button id="replace-page" type="button">替换原文</button>
+        <button id="restore-page" type="button">还原原文</button>
+      </div>
+    </div>
+
+    <label class="toggle" for="selection-toggle">
+      <span class="toggle-text">
+        <strong>划词翻译按钮</strong>
+        <small>选中文字后显示浮动按钮</small>
+      </span>
+      <input type="checkbox" id="selection-toggle">
+      <i aria-hidden="true"></i>
+    </label>
+
+    <p class="hint">选中文字后点击浮动按钮，或在右键菜单中选择“翻译所选文字”。</p>
+
+    <div class="status" id="status" hidden></div>
+
+    <footer class="foot">
+      <span id="version">v1.0.0</span>
+      <button class="link" id="open-options" type="button">全部设置</button>
+    </footer>
+  </div>
+
+  <script src="common.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

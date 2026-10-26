@@ -1,0 +1,317 @@
+:root {
+  --bg: #eef1f8;
+  --paper: #ffffff;
+  --ink: #1d2433;
+  --muted: #667085;
+  --line: #e3e8f2;
+  --accent: #2f6bff;
+  --accent-soft: rgba(47, 107, 255, 0.1);
+  --mark: #7c5cff;
+  --shadow: 0 24px 60px rgba(28, 39, 76, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1424;
+    --paper: #161d2f;
+    --ink: #e8ecf7;
+    --muted: #9aa6c0;
+    --line: #263149;
+    --accent-soft: rgba(105, 148, 255, 0.16);
+    --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 480px at 8% -8%, rgba(124, 92, 255, 0.16), transparent 60%),
+    radial-gradient(760px 420px at 105% 0%, rgba(47, 107, 255, 0.16), transparent 55%),
+    var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+    "Hiragino Sans GB", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ *
+ * Demo toolbar
+ * ------------------------------------------------------------------ */
+
+.demo-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 14px 28px 12px;
+  background: color-mix(in srgb, var(--paper) 86%, transparent);
+  border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
+}
+
+.demo-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 196px;
+}
+
+.demo-logo {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #2f6bff, #7c5cff);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  box-shadow: 0 6px 16px rgba(47, 107, 255, 0.32);
+}
+
+.demo-brand strong {
+  display: block;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.demo-brand small {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.demo-actions button {
+  appearance: none;
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.demo-actions button:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+}
+
+.demo-actions button:active {
+  transform: scale(0.97);
+}
+
+.demo-actions button:first-child,
+.demo-actions button:nth-child(2) {
+  border-color: transparent;
+  background: linear-gradient(135deg, #2f6bff, #6d5bff);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(47, 107, 255, 0.26);
+}
+
+.demo-actions button.ghost {
+  background: transparent;
+  color: var(--muted);
+}
+
+.demo-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------ *
+ * Article
+ * ------------------------------------------------------------------ */
+
+.paper {
+  width: min(820px, calc(100% - 40px));
+  margin: 34px auto 80px;
+  padding: 56px 64px 48px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+}
+
+.kicker {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+h1 {
+  margin: 0 0 10px;
+  font-family: "New York", Georgia, "Songti SC", serif;
+  font-size: clamp(30px, 4vw, 42px);
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+}
+
+.byline {
+  margin: 0 0 34px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.paper p {
+  margin: 0 0 20px;
+  font-size: 17px;
+  line-height: 1.76;
+}
+
+.paper h2 {
+  margin: 40px 0 16px;
+  font-size: 22px;
+  letter-spacing: -0.015em;
+}
+
+.paper ul {
+  margin: 0 0 22px;
+  padding-left: 22px;
+}
+
+.paper li {
+  margin: 8px 0;
+  font-size: 16.5px;
+  line-height: 1.7;
+}
+
+blockquote {
+  margin: 30px 0;
+  padding: 20px 24px;
+  border-left: 4px solid var(--mark);
+  border-radius: 0 12px 12px 0;
+  background: linear-gradient(120deg, var(--accent-soft), transparent 70%);
+  font-family: "New York", Georgia, "Songti SC", serif;
+  font-size: 19px;
+  line-height: 1.65;
+}
+
+pre {
+  margin: 0 0 24px;
+  padding: 18px 20px;
+  overflow-x: auto;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #d7e2ff;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+pre code {
+  font: inherit;
+}
+
+p code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.88em;
+}
+
+.signoff {
+  margin-top: 40px !important;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px !important;
+}
+
+/* Translations inserted by content.js already carry inline styles; this
+ * keeps their spacing pleasant inside the demo article. */
+[data-pt-translation] {
+  margin-top: 0.5em !important;
+}
+
+/* ------------------------------------------------------------------ *
+ * Help panel
+ * ------------------------------------------------------------------ */
+
+.demo-help {
+  margin-top: 44px;
+  padding: 24px 26px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+}
+
+.demo-help h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.demo-help ol {
+  margin: 0 0 14px;
+  padding-left: 20px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.demo-warn {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+@media (max-width: 720px) {
+  .demo-bar {
+    padding: 12px 16px;
+  }
+
+  .paper {
+    width: calc(100% - 24px);
+    margin-top: 18px;
+    padding: 32px 22px 28px;
+    border-radius: 16px;
+  }
+
+  .paper p {
+    font-size: 16px;
+  }
+
+  blockquote {
+    font-size: 17px;
+  }
+}
+
+@media print {
+  .demo-bar,
+  .demo-help {
+    display: none;
+  }
+
+  .paper {
+    box-shadow: none;
+    border: 0;
+  }
+}
