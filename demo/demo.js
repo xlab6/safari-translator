@@ -112,7 +112,7 @@
     sourceLang: 'auto',
     targetLang: 'zh-CN',
     selectionButton: true,
-    pageMode: 'bilingual',
+    pageMode: 'replace',
     theme: 'auto'
   };
 
@@ -146,7 +146,7 @@
       });
     }
 
-    if (message.type === 'pt:ping') return { ok: true, version: '1.0.1', demo: true };
+    if (message.type === 'pt:ping') return { ok: true, version: '1.0.2', demo: true };
 
     return { ok: false, error: { code: 'request', message: '演示模式不支持：' + message.type } };
   }

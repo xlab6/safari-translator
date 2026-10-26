@@ -58,7 +58,7 @@
       running: false,
       cancelled: false,
       runId: 0,
-      mode: 'bilingual',
+      mode: 'replace',
       added: [],
       originals: new Map(),
       total: 0,
@@ -1256,7 +1256,7 @@
     page.running = true;
     page.cancelled = false;
     page.status = 'running';
-    page.mode = mode || 'bilingual';
+    page.mode = mode || 'replace';
     page.total = units.length;
     page.done = 0;
     page.added = [];
@@ -1507,7 +1507,7 @@
           return undefined;
 
         case 'pt:translate-page':
-          startPageTranslation(message.mode || 'bilingual');
+          startPageTranslation(message.mode || 'replace');
           sendResponse({ ok: true });
           return undefined;
 

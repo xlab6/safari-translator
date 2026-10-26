@@ -61,6 +61,7 @@ The menu appears on web content only, not on Safari internal pages or extension 
 
 - **Bilingual mode** inserts a translated block under each paragraph, with a subtle left rule
 - **Replace mode** swaps text nodes in place and can be restored
+- Replace mode is the default; switch to bilingual mode in Settings
 - Skips `script`, `style`, `code`, `pre`, `textarea`, editable regions, hidden elements, and already translated nodes
 - Batches 8 units / 2,600 characters, with up to 3 concurrent requests; shows progress and a Cancel button
 - Processes at most 400 blocks or 700 text nodes per run
@@ -71,7 +72,7 @@ The menu appears on web content only, not on Safari internal pages or extension 
 Click the extension icon in Safari's toolbar to:
 
 - See the current provider, target language, and status
-- Translate the page bilingually, replace the page, or restore it
+- Translate the page using the saved mode (replace by default), switch to the other mode, or restore it
 - Toggle the selection button
 - Change the target language (saved immediately)
 - Open the full settings page
@@ -85,7 +86,7 @@ Changes are saved automatically (450 ms debounce) and pushed to open tabs:
 - **Providers**: eight cards marked keyless / key required / self-hosted
 - **Provider configuration**: fields for the selected provider and a **Test translation** button
 - **Languages**: source (auto-detect by default) and target
-- **Page translation**: default mode (bilingual / replace), selection button, theme (auto / light / dark)
+- **Page translation**: default mode (replace / bilingual), selection button, theme (auto / light / dark)
 - **Privacy and security**: explains how keys are stored
 - **Other**: reset to defaults and version information
 

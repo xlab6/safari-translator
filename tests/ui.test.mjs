@@ -103,10 +103,10 @@ test('the popup renders the current provider, language and version', async () =>
   assert.equal($(page, 'target').value, 'ja');
   assert.ok($(page, 'target').options.length >= 30);
   assert.equal($(page, 'selection-toggle').checked, false);
-  assert.equal($(page, 'version').textContent, 'v1.0.1');
+  assert.equal($(page, 'version').textContent, 'v1.0.2');
 });
 
-test('the popup translates the page in the chosen mode', async () => {
+test('the popup uses the saved page mode for the primary action', async () => {
   let release;
   const page = popup({
     respond: (message) =>
@@ -115,6 +115,9 @@ test('the popup translates the page in the chosen mode', async () => {
       })
   });
   await waitFor(() => $(page, 'target').options.length >= 30, 1000, 'popup init');
+
+  assert.equal($(page, 'page-mode-label').textContent, '双语对照');
+  assert.equal($(page, 'alternate-page').textContent, '替换原文');
 
   $(page, 'translate-page').click();
   await waitFor(() => $(page, 'translate-page').disabled, 500, 'busy state');
@@ -130,11 +133,32 @@ test('the popup translates the page in the chosen mode', async () => {
   assert.equal(page.window.__closed, true);
 });
 
-test('the popup replace button requests replace mode', async () => {
+test('the popup defaults to replacing the original text', async () => {
+  const page = popup({
+    settings: {
+      provider: 'mymemory',
+      sourceLang: 'auto',
+      targetLang: 'zh-CN',
+      selectionButton: true,
+      theme: 'auto'
+    }
+  });
+  await waitFor(() => $(page, 'target').options.length >= 30, 1000, 'popup init');
+
+  assert.equal($(page, 'page-mode-label').textContent, '替换原文');
+  assert.equal($(page, 'alternate-page').textContent, '双语对照');
+
+  $(page, 'translate-page').click();
+  await waitFor(() => page.browser.sent.length === 1, 500, 'request sent');
+  assert.equal(page.browser.sent[0].type, 'translate-active-page');
+  assert.equal(page.browser.sent[0].mode, 'replace');
+});
+
+test('the alternate mode button requests the other mode', async () => {
   const page = popup();
   await waitFor(() => $(page, 'target').options.length >= 30, 1000, 'popup init');
 
-  $(page, 'replace-page').click();
+  $(page, 'alternate-page').click();
   await waitFor(() => page.browser.sent.length === 1, 500, 'request sent');
   assert.equal(page.browser.sent[0].type, 'translate-active-page');
   assert.equal(page.browser.sent[0].mode, 'replace');
@@ -242,7 +266,7 @@ test('the options page lists every provider with the current one selected', asyn
       'Tencent Cloud', 'DeepL', 'LibreTranslate', 'OpenAI Compatible'
     ]
   );
-  assert.equal($(page, 'version').textContent, '1.0.1 · macOS Safari');
+  assert.equal($(page, 'version').textContent, '1.0.2 · macOS Safari');
   assert.match($(page, 'fields').textContent, /无需填写密钥/);
 });
 
@@ -360,6 +384,28 @@ test('a provider error is rendered in the test result', async () => {
   assert.match(box.textContent, /请充值/);
 });
 
+test('the options page defaults to replace mode', async () => {
+  const page = options({
+    settings: {
+      provider: 'mymemory',
+      sourceLang: 'auto',
+      targetLang: 'zh-CN',
+      selectionButton: true,
+      theme: 'auto'
+    }
+  });
+  await waitFor(() => providerIds(page).length > 0, 1000, 'providers rendered');
+
+  assert.equal(
+    page.document.querySelector('.mode[data-mode="replace"]').getAttribute('aria-checked'),
+    'true'
+  );
+  assert.equal(
+    page.document.querySelector('.mode[data-mode="bilingual"]').getAttribute('aria-checked'),
+    'false'
+  );
+});
+
 test('page mode, theme and language controls persist', async () => {
   const page = options();
   await waitFor(() => providerIds(page).length > 0, 1000, 'providers rendered');
@@ -408,7 +454,7 @@ test('reset restores the default settings', async () => {
 
   const saved = page.browser.storage.data.settings;
   assert.equal(saved.targetLang, 'zh-CN');
-  assert.equal(saved.pageMode, 'bilingual');
+  assert.equal(saved.pageMode, 'replace');
   assert.equal(saved.tencentSecretId, '');
   await waitFor(() => card(page, 'mymemory').getAttribute('aria-checked') === 'true', 1000, 'defaults rendered');
   assert.equal($(page, 'save-state').textContent, '已恢复默认');

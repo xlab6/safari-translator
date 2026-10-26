@@ -34,7 +34,7 @@
 
   function setBusy(value) {
     busy = value;
-    ['translate-page', 'replace-page', 'restore-page', 'target', 'selection-toggle'].forEach(function (id) {
+    ['translate-page', 'alternate-page', 'restore-page', 'target', 'selection-toggle'].forEach(function (id) {
       $(id).disabled = value;
     });
   }
@@ -91,6 +91,17 @@
   function renderToggles() {
     $('selection-toggle').checked = settings.selectionButton !== false;
     $('version').textContent = 'v' + PT.VERSION;
+  }
+
+  function otherMode(mode) {
+    return mode === 'bilingual' ? 'replace' : 'bilingual';
+  }
+
+  function renderPageMode() {
+    var mode = settings && settings.pageMode === 'bilingual' ? 'bilingual' : 'replace';
+    var alternate = otherMode(mode);
+    $('page-mode-label').textContent = mode === 'replace' ? '替换原文' : '双语对照';
+    $('alternate-page').textContent = alternate === 'replace' ? '替换原文' : '双语对照';
   }
 
   function errorOf(response) {
@@ -161,6 +172,7 @@
     renderProvider();
     renderLanguages();
     renderToggles();
+    renderPageMode();
 
     $('provider').addEventListener('click', openOptions);
     $('settings').addEventListener('click', openOptions);
@@ -177,8 +189,12 @@
       await save({ selectionButton: event.target.checked });
     });
 
-    $('translate-page').addEventListener('click', function () { translatePage('bilingual'); });
-    $('replace-page').addEventListener('click', function () { translatePage('replace'); });
+    $('translate-page').addEventListener('click', function () {
+      if (settings) translatePage(settings.pageMode);
+    });
+    $('alternate-page').addEventListener('click', function () {
+      if (settings) translatePage(otherMode(settings.pageMode));
+    });
     $('restore-page').addEventListener('click', restorePage);
   }
 

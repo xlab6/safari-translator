@@ -10,7 +10,7 @@
 
   var PT = (global.PT = global.PT || {});
 
-  PT.VERSION = '1.0.1';
+  PT.VERSION = '1.0.2';
 
   /* ------------------------------------------------------------------ *
    * Languages
@@ -268,7 +268,7 @@
       provider: 'mymemory',
       sourceLang: 'auto',
       targetLang: PT.defaultTarget(),
-      pageMode: 'bilingual',
+      pageMode: 'replace',
       selectionButton: true,
       theme: 'auto',
 
@@ -318,7 +318,7 @@
     }
     if (!PT.isLangCode(out.sourceLang)) out.sourceLang = 'auto';
 
-    if (out.pageMode !== 'bilingual' && out.pageMode !== 'replace') out.pageMode = 'bilingual';
+    if (out.pageMode !== 'bilingual' && out.pageMode !== 'replace') out.pageMode = 'replace';
     if (['auto', 'light', 'dark'].indexOf(out.theme) === -1) out.theme = 'auto';
     if (out.deeplPlan !== 'pro') out.deeplPlan = 'free';
 

@@ -90,7 +90,7 @@ test('defaults and normalisation', () => {
   assert.equal(defaults.provider, 'mymemory');
   assert.equal(defaults.sourceLang, 'auto');
   assert.equal(defaults.targetLang, 'zh-CN', 'Chinese UI defaults to Chinese');
-  assert.equal(defaults.pageMode, 'bilingual');
+  assert.equal(defaults.pageMode, 'replace');
   assert.equal(defaults.selectionButton, true);
   assert.equal(defaults.theme, 'auto');
   assert.equal(defaults.azureEndpoint, 'https://api.cognitive.microsofttranslator.com');
@@ -111,7 +111,7 @@ test('defaults and normalisation', () => {
   assert.equal(normalized.provider, 'mymemory');
   assert.equal(normalized.targetLang, 'zh-CN');
   assert.equal(normalized.sourceLang, 'auto');
-  assert.equal(normalized.pageMode, 'bilingual');
+  assert.equal(normalized.pageMode, 'replace');
   assert.equal(normalized.theme, 'auto');
   assert.equal(normalized.deeplPlan, 'free');
   assert.equal(normalized.selectionButton, false);
@@ -121,6 +121,9 @@ test('defaults and normalisation', () => {
   assert.equal(kept.targetLang, 'ja');
   assert.equal(kept.pageMode, 'replace');
   assert.equal(kept.theme, 'dark');
+
+  const bilingual = PT.normalizeSettings({ pageMode: 'bilingual' });
+  assert.equal(bilingual.pageMode, 'bilingual', 'an explicit bilingual choice is preserved');
 });
 
 test('provider validation explains what is missing', () => {

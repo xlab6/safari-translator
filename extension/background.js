@@ -225,7 +225,7 @@
   }
 
   function translateTab(tabId, mode) {
-    return sendToTab(tabId, { __pt: true, type: 'pt:translate-page', mode: mode || 'bilingual' });
+    return sendToTab(tabId, { __pt: true, type: 'pt:translate-page', mode: mode || 'replace' });
   }
 
   function restoreTab(tabId) {
@@ -349,7 +349,7 @@
       case 'translate-active-page':
       case 'translateActivePage': {
         var tab = await activeTab();
-        await translateTab(tab.id, message.mode || 'bilingual');
+        await translateTab(tab.id, message.mode || 'replace');
         return { ok: true };
       }
 
