@@ -24,8 +24,6 @@ A native Safari web extension for whole-page translation, selection translation,
 - [Translation providers](#translation-providers)
 - [Privacy and security](#privacy-and-security)
 - [Permissions](#permissions)
-- [Known limitations](#known-limitations)
-- [Troubleshooting](#troubleshooting)
 - [Recommended project](#recommended-project)
 
 ---
@@ -37,6 +35,8 @@ A native Safari web extension for whole-page translation, selection translation,
 - Click **Translate this page** in the toolbar popup or the right-click menu
 - The site is remembered afterwards: in-site navigation (including single-page app route changes) is translated automatically
 - In-site navigation only processes new or changed text; unchanged areas such as sidebars are not retranslated
+- Content loaded by infinite scrolling is translated automatically, with no extra click
+- Long pages are translated in full, with no paragraph or text-node cap
 - **Restore original** brings the page back and stops automatic translation for that site
 - **Replace**: replace page text directly for quick reading; **Bilingual**: insert translations below the original for side-by-side reading
 - Replace is the default and can be changed in settings
@@ -293,47 +293,6 @@ Text is sent to the translation provider you choose. For confidential, personal,
 | Access all websites | Show the selection button, read selected text, translate pages, and request your chosen provider |
 
 The extension does not read page content unrelated to translation. To limit it, open Safari → Settings → Extensions → Safari Translator → Website Access and choose **Allow on Specific Websites**.
-
----
-
-## Known limitations
-
-- Iframes, Safari Reader, PDFs, extension pages, and browser-internal pages are not supported
-- Automatic in-site translation only applies within the same site after you have translated it; **Restore original** stops it
-- Content added later by infinite scrolling is not translated automatically; click **Translate this page** again
-- Long pages are limited to roughly 400 paragraphs or 700 text nodes; the rest is left untranslated
-- Bilingual mode inserts translation blocks and may affect layouts that rely on fixed heights or adjacent elements
-- Translations are inserted as plain text; bold, links, and other formatting are not preserved
-- Page translations disappear on refresh, but the local translation cache remains reusable
-- Google Translate uses an unofficial endpoint and may stop working; it is usually unreachable in mainland China
-- OpenAI-compatible output depends on the model and is not suitable for strict terminology
-- Keys are stored in plain text locally; not suitable for shared devices
-- macOS Safari only; there is no iOS / iPadOS version
-
----
-
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| Safari does not list Safari Translator | App never launched, extension unsigned, Safari too old | Launch the app once; check macOS / Safari versions; reopen Safari settings |
-| No translation items in the context menu | Extension disabled, page is not http/https, site access denied | Enable it in Safari settings; allow the site; reload the page |
-| A page is not translated automatically | First visit, or you restored the original earlier | Click **Translate this page**; later in-site navigation is translated automatically |
-| In-site navigation stops translating | The site was restored, the link goes to another site, or the site is not remembered | Translate the page again; make sure you stayed on the same site |
-| No floating button after selecting text | Selection button disabled, selection over 5000 characters, or page blocks scripts | Check the setting; use the context menu; reload the page |
-| “Translation provider not configured” | The selected provider needs a key | Open settings → provider configuration, enter the key, then test |
-| “Invalid key or insufficient permissions” | Wrong key, region mismatch, or sub-account lacks permission | Check key / region / permissions; multi-region Azure resources need a region |
-| “Too many requests” or quota errors | Free quota exhausted or rate-limited | Switch providers, translate less, check provider quota |
-| Google Translate always times out | Google is unreachable | Use Microsoft, Alibaba Cloud, Tencent Cloud, or MyMemory |
-| Microsoft test fails with 401 | Wrong key or region | Copy them again from the Azure portal; set the region for multi-region resources |
-| DeepL returns 403 | Wrong plan | Free key with Free plan, Pro key with Pro plan |
-| Only part of a page is translated | Paragraph / node limit reached or some batches failed | Check progress; retry or translate in parts |
-| Layout breaks after translation | Bilingual mode inserted blocks | Use Replace mode or restore the original |
-| Settings changes do not apply | The page was opened before the change, or saving failed | Reload the page; check that settings shows “Saved” |
-| Settings cannot be saved | Safari storage cleared, private browsing | Exit private browsing; restart Safari; check free disk space |
-| Behavior still looks like an old version | Safari cached the old extension | Quit Safari completely (⌘Q) and reopen; otherwise disable and re-enable the extension |
-
-If the problem persists, check extension errors under Safari → Develop → Extensions.
 
 ---
 

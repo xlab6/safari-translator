@@ -1,6 +1,6 @@
 {
   "name": "safari-translator",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "private": true,
   "description": "A Safari web extension that translates selected text and whole pages on demand, with configurable providers.",
   "scripts": {

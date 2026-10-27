@@ -26,8 +26,6 @@
   if (!api || !api.runtime) return;
 
   var MAX_SELECTION = 5000;
-  var MAX_BLOCKS = 400;
-  var MAX_TEXT_NODES = 700;
   var BATCH_SIZE = 96;
   var BATCH_CHARS = 12000;
   var VIEWPORT_MARGIN = 240;
@@ -37,6 +35,8 @@
   var AUTO_ROUTE_SETTLE = 150;
   var AUTO_ROUTE_MAX_WAIT = 1500;
   var AUTO_URL_POLL = 250;
+  var AUTO_CONTENT_SETTLE = 500;
+  var AUTO_CONTENT_MAX_WAIT = 2000;
   var FATAL_CODES = { auth: 1, config: 1, quota: 1, lang: 1 };
 
   var SKIP_SELECTOR = [
@@ -75,13 +75,17 @@
       lastKey: null,
       initialized: false,
       listening: false,
-      routeSeq: 0
+      routeSeq: 0,
+      contentTimer: null,
+      contentFirst: 0,
+      contentObserver: null
     },
     translatedOrigins: new Set(),
     page: {
       status: 'idle', // idle | running | translated
       running: false,
       cancelled: false,
+      autoBlocked: false,
       runId: 0,
       mode: 'replace',
       target: null,
@@ -1252,7 +1256,7 @@
     var seen = new Set();
     var elements = document.body.querySelectorAll(BLOCK_SELECTOR);
 
-    for (var i = 0; i < elements.length && units.length < MAX_BLOCKS; i++) {
+    for (var i = 0; i < elements.length; i++) {
       var element = elements[i];
       if (seen.has(element)) continue;
       seen.add(element);
@@ -1280,7 +1284,7 @@
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
     var node;
 
-    while ((node = walker.nextNode()) && units.length < MAX_TEXT_NODES) {
+    while ((node = walker.nextNode())) {
       var parent = node.parentElement;
       if (!parent) continue;
       if (parent.closest(SKIP_SELECTOR)) continue;
@@ -1572,6 +1576,7 @@
     state.translatedOrigins.add(origin);
     PT.storageSet({ ptTranslatedOrigins: Array.from(state.translatedOrigins) }).catch(function () {});
     startNavigationWatcher();
+    startContentObserver();
   }
 
   function forgetTranslatedOrigin() {
@@ -1582,6 +1587,92 @@
       clearInterval(state.auto.pollTimer);
       state.auto.pollTimer = null;
     }
+    stopContentObserver();
+  }
+
+  function isOwnTranslationNode(node) {
+    if (!node) return true;
+    var element = node.nodeType === 1 ? node : node.parentElement;
+    if (!element || !element.closest) return false;
+    return !!element.closest('[data-pt-translation], [data-pt-ui]');
+  }
+
+  function recordsAddPageText(records) {
+    for (var i = 0; i < records.length; i++) {
+      var added = records[i].addedNodes || [];
+      for (var j = 0; j < added.length; j++) {
+        var node = added[j];
+        if (isOwnTranslationNode(node)) continue;
+        if (node.nodeType === 3) {
+          if (PT.normalizeText(node.nodeValue)) return true;
+          continue;
+        }
+        if (node.nodeType !== 1) continue;
+        if (!node.isConnected) continue;
+        if (PT.normalizeText(node.textContent || '')) return true;
+      }
+    }
+    return false;
+  }
+
+  function startContentObserver() {
+    if (state.auto.contentObserver || !window.MutationObserver) return;
+    var target = document.documentElement;
+    if (!target) return;
+    try {
+      state.auto.contentObserver = new window.MutationObserver(function (records) {
+        if (state.page.autoBlocked) return;
+        // The site is only remembered at the end of the first run, so accept
+        // additions during that run as well.
+        if (!isAutoEligible() && !state.page.running) return;
+        if (!recordsAddPageText(records)) return;
+        scheduleAutoContent();
+      });
+      state.auto.contentObserver.observe(target, { childList: true, subtree: true });
+    } catch (error) {
+      state.auto.contentObserver = null;
+    }
+  }
+
+  function stopContentObserver() {
+    if (state.auto.contentObserver) {
+      try { state.auto.contentObserver.disconnect(); } catch (e) { /* ignore */ }
+      state.auto.contentObserver = null;
+    }
+    if (state.auto.contentTimer) {
+      clearTimeout(state.auto.contentTimer);
+      state.auto.contentTimer = null;
+    }
+    state.auto.contentFirst = 0;
+  }
+
+  function scheduleAutoContent() {
+    var now = Date.now();
+    if (!state.auto.contentFirst) state.auto.contentFirst = now;
+    if (state.auto.contentTimer) clearTimeout(state.auto.contentTimer);
+
+    // Debounce bursts (infinite scroll appends several nodes at once) but do
+    // not let a continuously growing page postpone translation forever.
+    var wait = now - state.auto.contentFirst >= AUTO_CONTENT_MAX_WAIT ? 0 : AUTO_CONTENT_SETTLE;
+    state.auto.contentTimer = setTimeout(runAutoContent, wait);
+  }
+
+  function runAutoContent() {
+    state.auto.contentTimer = null;
+    if (state.page.autoBlocked) {
+      state.auto.contentFirst = 0;
+      return;
+    }
+    if (state.page.running) {
+      state.auto.contentTimer = setTimeout(runAutoContent, AUTO_CONTENT_SETTLE);
+      return;
+    }
+    if (!isAutoEligible() || state.page.status !== 'translated') {
+      state.auto.contentFirst = 0;
+      return;
+    }
+    state.auto.contentFirst = 0;
+    startPageTranslation(state.page.mode || state.settings.pageMode, { auto: true });
   }
 
   function isAutoEligible() {
@@ -1771,7 +1862,10 @@
 
     // Automatic runs happen right after load and the cached copy is current;
     // an explicit action must pick up changes made in the options tab.
-    if (!auto) await refreshSettings();
+    if (!auto) {
+      page.autoBlocked = false;
+      await refreshSettings();
+    }
 
     var problem = PT.validateProvider(state.settings);
     if (problem) {
@@ -1821,6 +1915,9 @@
     page.visible = 0;
     page.offscreen = 0;
     stopVisibilityObserver(page);
+    // Content appended while this first run is in flight must be picked up
+    // once the run finishes, before the site is marked as translated.
+    startContentObserver();
 
     var visibleQueue = createQueue();
     var nearQueue = createQueue();
@@ -1929,6 +2026,7 @@
     }
 
     if (fatal) {
+      if (auto && FATAL_CODES[fatal.code]) page.autoBlocked = true;
       page.status = done || page.added.length || page.originals.size ? 'translated' : 'idle';
       if (page.status === 'translated') rememberTranslatedOrigin();
       q('progress-title').textContent = auto ? '自动翻译中断' : '翻译中断';

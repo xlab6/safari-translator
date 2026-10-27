@@ -208,6 +208,87 @@ test('a manual translation remembers the site for later routes', async () => {
   }
 });
 
+test('translates content appended after the page was translated', async () => {
+  const page = await contentPage();
+  try {
+    await page.content.translatePage('replace');
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'initial page translation'
+    );
+
+    const more = page.window.document.createElement('p');
+    more.id = 'more';
+    more.textContent = 'Loaded later in English';
+    page.window.document.querySelector('main').appendChild(more);
+
+    await waitFor(
+      () => batchTexts(page).includes('Loaded later in English'),
+      6000,
+      'translation of the appended content'
+    );
+    await waitFor(
+      () => page.window.document.getElementById('more').textContent.startsWith('[译]'),
+      6000,
+      'appended content is translated without another action'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('translates every block on a long page', async () => {
+  const paragraphs = Array.from(
+    { length: 405 },
+    (_, index) => `<p id="block-${index}">Block ${index} in English</p>`
+  ).join('');
+  const page = await contentPage({
+    html: `<main>${paragraphs}</main>`,
+    settings: { pageMode: 'bilingual' }
+  });
+  try {
+    await page.content.translatePage('bilingual');
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      30000,
+      'long page translation'
+    );
+    assert.ok(
+      page.window.document.querySelector('#block-404 > [data-pt-translation]'),
+      'blocks beyond the old 400-block cap are translated'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('translates every text node on a long page', async () => {
+  const paragraphs = Array.from(
+    { length: 720 },
+    (_, index) => `<p id="node-${index}">Node ${index} in English</p>`
+  ).join('');
+  const page = await contentPage({
+    html: `<main>${paragraphs}</main>`,
+    settings: { pageMode: 'replace' }
+  });
+  try {
+    await page.content.translatePage('replace');
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      30000,
+      'long page translation'
+    );
+    assert.equal(
+      page.window.document.getElementById('node-719').textContent,
+      '[译]Node 719 in English',
+      'text nodes beyond the old 700-node cap are translated'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
 function batchTexts(page) {
   return Array.from(
     page.browser.sent

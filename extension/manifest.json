@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Safari Translator — 网页翻译",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "description": "选中文字即可翻译，按需翻译整页；翻译过的站点会记住并在再次访问时自动续译。可配置微软 Azure、阿里云、腾讯云、DeepL、Google 等服务。Translate selected text, translate a page on demand, and resume sites you already translated; supports Azure, Alibaba Cloud, Tencent Cloud, DeepL, Google and more.",
   "permissions": [
     "storage",
