@@ -382,11 +382,16 @@ select option { color: #15171c; background: #fff; }
 .row input:checked + i::after { transform: translateX(14px); }
 .row input:focus-visible + i { box-shadow: 0 0 0 3px var(--accent-soft); }
 
-.security { background: var(--warn-soft); border-color: rgba(181, 71, 8, .22); }
-.security .card-head { margin-bottom: 8px; }
-.security-lead { margin: 0 0 8px; font-size: 12px; color: var(--warn); line-height: 1.6; }
-.security-list { margin: 0; padding-left: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.65; }
-.security-list li { margin-bottom: 2px; }
+.repo-link {
+  font-size: 11.5px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.repo-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
 .version-tag {
   padding: 3px 8px;

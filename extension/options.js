@@ -7,7 +7,9 @@
   var api = PT.getApi();
 
   var settings = null;
+  var pending = {};
   var saveTimer = null;
+  var flushChain = Promise.resolve();
   var stateTimer = null;
   var testing = false;
 
@@ -181,27 +183,45 @@
     }
   }
 
+  // Only changed keys are written. Sending the whole object made two pages
+  // overwrite each other's edits with stale values.
+  function mark(key, value) {
+    settings[key] = value;
+    pending[key] = value;
+    scheduleSave();
+  }
+
   function scheduleSave() {
     setSaveState('saving', '保存中…');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(flush, 450);
   }
 
-  async function flush() {
+  function flush() {
     clearTimeout(saveTimer);
     saveTimer = null;
-    try {
-      settings = await PT.updateSettings(settings);
-      setSaveState('saved', '已保存');
-    } catch (error) {
-      setSaveState('error', '保存失败');
-    }
+
+    var patch = pending;
+    pending = {};
+    if (!Object.keys(patch).length) return flushChain;
+
+    var run = async function () {
+      try {
+        var saved = await PT.updateSettings(patch);
+        settings = Object.assign({}, saved, pending);
+        if (!Object.keys(pending).length) setSaveState('saved', '已保存');
+      } catch (error) {
+        pending = Object.assign({}, patch, pending);
+        setSaveState('error', '保存失败');
+      }
+    };
+
+    flushChain = flushChain.then(run, run);
+    return flushChain;
   }
 
   async function saveNow() {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-    await flush();
+    return flush();
   }
 
   /* ------------------------------------------------------------------ *
@@ -238,12 +258,11 @@
 
   async function selectProvider(id) {
     if (!settings || settings.provider === id) return;
-    settings.provider = id;
+    mark('provider', id);
     hideTestResult();
     renderProviders();
     renderConfigMeta();
     renderFields();
-    setSaveState('saving', '保存中…');
     await saveNow();
   }
 
@@ -310,7 +329,7 @@
         });
         select.value = settings[field.key] || (field.options && field.options[0] && field.options[0].value) || '';
         select.addEventListener('change', function () {
-          settings[field.key] = select.value;
+          mark(field.key, select.value);
           saveNow();
         });
         row.appendChild(select);
@@ -325,12 +344,11 @@
         input.spellcheck = false;
 
         input.addEventListener('input', function () {
-          settings[field.key] = input.value;
           if (field.type === 'password') {
             // Re-evaluate the “required” hint without rebuilding the field.
             inputWrap.setAttribute('data-filled', input.value ? 'true' : 'false');
           }
-          scheduleSave();
+          mark(field.key, input.value);
         });
 
         inputWrap.appendChild(input);
@@ -478,7 +496,6 @@
   }
 
   function renderToggles() {
-    $('auto-translate').checked = settings.autoTranslate !== false;
     $('selection-button').checked = settings.selectionButton !== false;
     $('theme').value = settings.theme || 'auto';
   }
@@ -503,6 +520,12 @@
 
   async function resetAll() {
     if (!window.confirm('确定恢复默认设置？已保存的服务密钥将被清除，此操作不可撤销。')) return;
+
+    // Drop edits that have not been written yet so they cannot come back
+    // after the defaults are saved.
+    pending = {};
+    clearTimeout(saveTimer);
+    saveTimer = null;
 
     try {
       await PT.saveSettings(PT.defaultSettings());
@@ -530,42 +553,70 @@
     renderAll();
 
     $('source-lang').addEventListener('change', function (event) {
-      settings.sourceLang = event.target.value;
+      mark('sourceLang', event.target.value);
       saveNow();
     });
 
     $('target-lang').addEventListener('change', function (event) {
       var value = event.target.value;
       if (!PT.isLangCode(value) || value === 'auto') return;
-      settings.targetLang = value;
+      mark('targetLang', value);
       saveNow();
     });
 
     Array.prototype.forEach.call(document.querySelectorAll('.mode'), function (button) {
       button.addEventListener('click', function () {
-        settings.pageMode = button.getAttribute('data-mode');
+        mark('pageMode', button.getAttribute('data-mode'));
         renderModes();
         saveNow();
       });
     });
 
-    $('auto-translate').addEventListener('change', function (event) {
-      settings.autoTranslate = event.target.checked;
-      saveNow();
-    });
-
     $('selection-button').addEventListener('change', function (event) {
-      settings.selectionButton = event.target.checked;
+      mark('selectionButton', event.target.checked);
       saveNow();
     });
 
     $('theme').addEventListener('change', function (event) {
-      settings.theme = event.target.value;
+      mark('theme', event.target.value);
       saveNow();
     });
 
     $('test').addEventListener('click', testProvider);
     $('reset').addEventListener('click', resetAll);
+
+    // Safari may reuse an existing options tab (or restore it from the
+    // back/forward cache), so re-read storage whenever the page is shown
+    // again instead of trusting the in-memory copy.
+    window.addEventListener('pageshow', syncFromStorage);
+    window.addEventListener('focus', syncFromStorage);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') syncFromStorage();
+    });
+    if (api.storage && api.storage.onChanged && api.storage.onChanged.addListener) {
+      api.storage.onChanged.addListener(function (changes, areaName) {
+        if (areaName && areaName !== 'local') return;
+        if (!changes || !changes.settings) return;
+        if (document.hasFocus()) return;
+        syncFromStorage();
+      });
+    }
+  }
+
+  async function syncFromStorage() {
+    if (!settings || saveTimer || Object.keys(pending).length) return;
+    try {
+      var latest = await PT.loadSettings();
+      var changed = Object.keys(latest).some(function (key) {
+        return JSON.stringify(latest[key]) !== JSON.stringify(settings[key]);
+      });
+      if (!changed) return;
+      settings = latest;
+      renderAll();
+      hideTestResult();
+    } catch (error) {
+      // Keep the values already on screen when storage cannot be read.
+    }
   }
 
   init();

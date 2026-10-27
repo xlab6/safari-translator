@@ -12,6 +12,7 @@ legibility in the Safari toolbar.
 """
 
 import argparse
+import math
 import os
 from pathlib import Path
 
@@ -27,6 +28,11 @@ HELVETICA = "/System/Library/Fonts/Helvetica.ttc"
 BLUE = (47, 107, 255)
 VIOLET = (124, 92, 255)
 INK = (32, 52, 170)
+
+SAFARI_FACE_TOP = (92, 205, 255)
+SAFARI_FACE_BOTTOM = (10, 105, 232)
+SAFARI_NEEDLE = (244, 67, 54)
+SAFARI_NEEDLE_LIGHT = (240, 245, 250)
 
 SUPERSAMPLE = 2
 
@@ -75,7 +81,95 @@ def load_font(path, px, index=0):
     return ImageFont.truetype(path, px, index=index)
 
 
-def render_master(detailed=True):
+def vertical_gradient(width, height, start, end):
+    t = np.linspace(0, 1, height, dtype=np.float32)[:, None, None]
+    a = np.array(start, dtype=np.float32)
+    b = np.array(end, dtype=np.float32)
+    data = np.repeat(a + (b - a) * t, width, axis=1).astype(np.uint8)
+    return Image.fromarray(data, "RGB").convert("RGBA")
+
+
+def polar_point(cx, cy, angle, distance):
+    rad = math.radians(angle)
+    return (cx + math.sin(rad) * distance, cy - math.cos(rad) * distance)
+
+
+def draw_tick(draw, cx, cy, angle, inner, outer, half_width):
+    rad = math.radians(angle)
+    dx, dy = math.sin(rad), -math.cos(rad)
+    px, py = math.cos(rad), math.sin(rad)
+    draw.polygon([
+        (cx + dx * outer + px * half_width, cy + dy * outer + py * half_width),
+        (cx + dx * outer - px * half_width, cy + dy * outer - py * half_width),
+        (cx + dx * inner - px * half_width, cy + dy * inner - py * half_width),
+        (cx + dx * inner + px * half_width, cy + dy * inner + py * half_width)
+    ], fill=(255, 255, 255, 240))
+
+
+def safari_badge(size, cx, cy, radius, ticks=True):
+    """A Safari-style compass badge for the bottom-right corner."""
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
+    shadow = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(shadow).ellipse(
+        (cx - radius, cy - radius + radius * 0.10,
+         cx + radius, cy + radius + radius * 0.10),
+        fill=120
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius * 0.11))
+    shadow_layer = Image.new("RGBA", (size, size), (14, 24, 60, 255))
+    shadow_layer.putalpha(shadow)
+    layer.alpha_composite(shadow_layer)
+
+    draw = ImageDraw.Draw(layer)
+    draw.ellipse(
+        (cx - radius, cy - radius, cx + radius, cy + radius),
+        fill=(255, 255, 255, 255),
+        outline=(208, 217, 231, 255),
+        width=max(2, int(radius * 0.035))
+    )
+
+    face_radius = radius * 0.845
+    diameter = int(math.ceil(face_radius * 2))
+    face = vertical_gradient(diameter, diameter, SAFARI_FACE_TOP, SAFARI_FACE_BOTTOM)
+    face_mask = Image.new("L", (diameter, diameter), 0)
+    ImageDraw.Draw(face_mask).ellipse((0, 0, diameter - 1, diameter - 1), fill=255)
+    face.putalpha(face_mask)
+    layer.alpha_composite(face, (int(cx - face_radius), int(cy - face_radius)))
+
+    if ticks:
+        for index in range(16):
+            angle = index * 22.5
+            if index % 4 == 0:
+                length, half_width = radius * 0.150, radius * 0.034
+            elif index % 2 == 0:
+                length, half_width = radius * 0.120, radius * 0.030
+            else:
+                length, half_width = radius * 0.080, radius * 0.025
+            outer = radius * 0.690
+            draw_tick(draw, cx, cy, angle, outer - length, outer, half_width)
+
+    needle_length = radius * 0.610
+    needle_half = radius * 0.088
+    tip = polar_point(cx, cy, 45, needle_length)
+    tail = polar_point(cx, cy, 225, needle_length)
+    side_a = polar_point(cx, cy, 135, needle_half)
+    side_b = polar_point(cx, cy, 315, needle_half)
+    outline = max(1, int(radius * 0.012))
+    draw.polygon([tail, side_a, side_b], fill=SAFARI_NEEDLE_LIGHT + (255,),
+                 outline=(214, 222, 234, 255), width=outline)
+    draw.polygon([tip, side_a, side_b], fill=SAFARI_NEEDLE + (255,),
+                 outline=(255, 255, 255, 255), width=outline)
+
+    hub = radius * 0.060
+    draw.ellipse((cx - hub, cy - hub, cx + hub, cy + hub),
+                 fill=(255, 255, 255, 255), outline=(203, 212, 226, 255),
+                 width=max(1, int(radius * 0.014)))
+
+    return layer
+
+
+def render_master(detailed=True, badge=False):
     size = 1024
     square = gradient(size, BLUE, VIOLET)
     mask = rounded_mask(size, (0, 0, size - 1, size - 1), 232)
@@ -85,11 +179,17 @@ def render_master(detailed=True):
 
     if not detailed:
         # 32px and below: a single white 文 reads better than tiny marks.
-        font = load_font(HIragino, 470, index=2)
-        glyphs = [("文", font, (512, 508))]
+        if badge:
+            font = load_font(HIragino, 390, index=2)
+            glyphs = [("文", font, (450, 462))]
+        else:
+            font = load_font(HIragino, 720, index=2)
+            glyphs = [("文", font, (512, 512))]
         shade = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         shade.paste((255, 255, 255, 255), (0, 0), text_mask(size, glyphs))
         out.alpha_composite(shade)
+        if badge:
+            out.alpha_composite(safari_badge(size, 790, 790, 140, ticks=False))
         return out
 
     bubble = bubble_mask(size, True)
@@ -119,6 +219,8 @@ def render_master(detailed=True):
         Image.composite(highlight.getchannel("A"), Image.new("L", (size, size), 0), mask)
     )
     out.alpha_composite(highlight)
+    if badge:
+        out.alpha_composite(safari_badge(size, 795, 795, 136, ticks=True))
     return out
 
 
@@ -144,14 +246,20 @@ def main():
     parser.add_argument("--xcode", metavar="APP_DIR", help="Xcode app source directory")
     args = parser.parse_args()
 
-    detailed = render_master(True)
-    simple = render_master(False)
+    detailed = render_master(True, badge=True)
+    compact = render_master(False, badge=True)
+    simple = render_master(False, badge=False)
     app = app_icon(detailed)
 
     ICON_DIR.mkdir(parents=True, exist_ok=True)
     sizes = [16, 32, 48, 64, 128, 256, 512]
     for size in sizes:
-        source = simple if size <= 32 else detailed
+        if size <= 16:
+            source = simple
+        elif size <= 32:
+            source = compact
+        else:
+            source = detailed
         icon = downscale(source, size)
         icon.save(ICON_DIR / f"icon-{size}.png", optimize=True)
         print(f"extension/icons/icon-{size}.png")

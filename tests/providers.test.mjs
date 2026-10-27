@@ -108,6 +108,126 @@ test('Google reports throttling and malformed responses', async () => {
   });
 });
 
+function googleJoined(text) {
+  return jsonResponse(200, [[[text, '', null]], null, 'en']);
+}
+
+function queryOf(call) {
+  if (call.init && call.init.body) {
+    return new URLSearchParams(String(call.init.body)).get('q');
+  }
+  return new URL(call.url).searchParams.get('q');
+}
+
+/** Promise/callback storage in the shape Safari exposes on browser.storage.local. */
+function fakeStorage() {
+  const data = {};
+  const clone = (value) => (value === undefined ? value : JSON.parse(JSON.stringify(value)));
+  function listOf(keys) {
+    return Array.isArray(keys) ? keys : [keys];
+  }
+  return {
+    data,
+    local: {
+      get(keys, callback) {
+        const out = {};
+        listOf(keys).forEach((key) => {
+          if (key in data) out[key] = clone(data[key]);
+        });
+        if (callback) setTimeout(() => callback(out), 0);
+        return Promise.resolve(out);
+      },
+      set(items, callback) {
+        Object.keys(items).forEach((key) => { data[key] = clone(items[key]); });
+        if (callback) setTimeout(callback, 0);
+        return Promise.resolve();
+      },
+      remove(keys, callback) {
+        listOf(keys).forEach((key) => { delete data[key]; });
+        if (callback) setTimeout(callback, 0);
+        return Promise.resolve();
+      }
+    }
+  };
+}
+
+function googleEchoSetup(storage) {
+  const handler = (call) => {
+    const query = queryOf(call);
+    return googleJoined(query.split('\n\n').map((text) => '译:' + text).join('\n\n'));
+  };
+  if (!storage) return setup(handler);
+  return setup(handler, { browser: { storage } });
+}
+
+test('Google joins short texts into one request and fills the per-text cache', async () => {
+  const { PT, fetch } = setup((call) => {
+    const query = queryOf(call);
+    return googleJoined(query.split('\n\n').map((text) => '译:' + text).join('\n\n'));
+  });
+  const settings = config(PT, { provider: 'google' });
+
+  const results = await PT.translateMany(settings, ['One', 'Two', 'Three'], {});
+  assert.equal(fetch.calls.length, 1, 'three texts share one request');
+  assert.equal(queryOf(fetch.calls[0]), 'One\n\nTwo\n\nThree');
+  assert.deepEqual(
+    Array.from(results, (result) => result.ok && result.text),
+    ['译:One', '译:Two', '译:Three']
+  );
+  assert.equal(results[0].provider, 'google');
+  assert.equal(results[1].detected, 'en');
+
+  const again = await PT.translateMany(settings, ['One', 'Two', 'Three'], {});
+  assert.equal(fetch.calls.length, 1, 'cached texts do not hit the network');
+  assert.equal(again[2].text, '译:Three');
+
+  const single = await PT.translate(settings, 'Two', {});
+  assert.equal(single.text, '译:Two', 'joined results populate the single-text cache');
+});
+
+test('Google batches longer lists through the POST endpoint', async () => {
+  const { PT, fetch } = setup((call) => {
+    const query = queryOf(call);
+    return googleJoined(query.split('\n\n').map((text) => '译:' + text).join('\n\n'));
+  });
+  const texts = Array.from(
+    { length: 40 },
+    (_, index) => 'Sentence number ' + index + ' is long enough to force a POST request body.'
+  );
+
+  const results = await PT.translateMany(config(PT, { provider: 'google' }), texts, {});
+  assert.equal(fetch.calls.length, 1);
+  assert.equal(fetch.calls[0].init.method, 'POST');
+  assert.match(header(fetch.calls[0], 'content-type'), /x-www-form-urlencoded/);
+  assert.equal(results.length, 40);
+  assert.equal(results[39].text, '译:' + texts[39]);
+});
+
+test('Google falls back to one request per text when separators are lost', async () => {
+  let first = true;
+  const { PT, fetch } = setup((call) => {
+    if (first) {
+      first = false;
+      return googleJoined('merged output without separators');
+    }
+    return googleJoined('译:' + queryOf(call));
+  });
+
+  const results = await PT.translateMany(config(PT, { provider: 'google' }), ['Alpha', 'Beta'], {});
+  assert.equal(fetch.calls.length, 3, 'one joined attempt plus two single requests');
+  assert.deepEqual(Array.from(results, (result) => result.text), ['译:Alpha', '译:Beta']);
+});
+
+test('Google batch failures are reported per text', async () => {
+  const { PT } = setup(() => jsonResponse(429, {}));
+  const results = await PT.translateMany(config(PT, { provider: 'google' }), ['A', 'B'], {});
+  assert.equal(results.length, 2);
+  results.forEach((result) => {
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'quota');
+  });
+});
+
 test('Azure sends the subscription key, region and language pair', async () => {
   const { PT, fetch } = setup(() =>
     jsonResponse(200, [{ detectedLanguage: { language: 'en', score: 1 }, translations: [{ text: '你好' }] }])
@@ -137,6 +257,95 @@ test('Azure omits the region header when none is configured', async () => {
   const { PT, fetch } = setup(() => jsonResponse(200, [{ translations: [{ text: '你好' }] }]));
   await PT.translate(config(PT, { provider: 'azure', azureKey: 'k' }), 'Hello', {});
   assert.equal(header(fetch.calls[0], 'Ocp-Apim-Subscription-Region'), undefined);
+});
+
+test('Aliyun joins short texts into one signed request', async () => {
+  const { PT, fetch } = setup((call) => {
+    const source = new URL(call.url).searchParams.get('SourceText');
+    return jsonResponse(200, {
+      Code: '200',
+      Data: {
+        Translated: source.split('\n\n').map((text) => '译:' + text).join('\n\n'),
+        DetectedLanguage: 'en'
+      }
+    });
+  });
+  const settings = config(PT, {
+    provider: 'aliyun',
+    aliyunKeyId: 'key-id',
+    aliyunKeySecret: 'key-secret'
+  });
+
+  const results = await PT.translateMany(settings, ['One', 'Two', 'Three'], {});
+  assert.equal(fetch.calls.length, 1, 'three texts share one request');
+  assert.equal(new URL(fetch.calls[0].url).searchParams.get('SourceText'), 'One\n\nTwo\n\nThree');
+  assert.deepEqual(Array.from(results, (result) => result.text), ['译:One', '译:Two', '译:Three']);
+  assert.equal(results[2].detected, 'en');
+});
+
+test('translations persist across a restart without another request', async () => {
+  const storage = fakeStorage();
+  const first = googleEchoSetup(storage);
+  const settings = config(first.PT, { provider: 'google' });
+
+  const initial = await first.PT.translateMany(settings, ['One', 'Two'], {});
+  assert.equal(first.fetch.calls.length, 1);
+  assert.deepEqual(Array.from(initial, (result) => result.text), ['译:One', '译:Two']);
+  assert.ok(storage.data.ptMemoryIndex.length >= 2, 'the memory index is persisted');
+
+  // A new sandbox is a new background page: no in-memory cache survives.
+  const restarted = googleEchoSetup(storage);
+  const cached = await restarted.PT.translateMany(
+    config(restarted.PT, { provider: 'google' }),
+    ['One', 'Two'],
+    {}
+  );
+  assert.equal(restarted.fetch.calls.length, 0, 'remembered texts cost no quota');
+  assert.deepEqual(Array.from(cached, (result) => result.text), ['译:One', '译:Two']);
+  assert.equal(cached[1].detected, 'en');
+
+  const single = await restarted.PT.translate(
+    config(restarted.PT, { provider: 'google' }),
+    'Two',
+    {}
+  );
+  assert.equal(single.text, '译:Two', 'single translations use the same memory');
+
+  const newOnly = await restarted.PT.translateMany(
+    config(restarted.PT, { provider: 'google' }),
+    ['One', 'Three'],
+    {}
+  );
+  assert.equal(restarted.fetch.calls.length, 1, 'only the new text is requested');
+  assert.equal(queryOf(restarted.fetch.calls[0]), 'Three');
+  assert.deepEqual(Array.from(newOnly, (result) => result.text), ['译:One', '译:Three']);
+});
+
+test('the persistent memory respects the language pair and noCache', async () => {
+  const storage = fakeStorage();
+  const first = googleEchoSetup(storage);
+  await first.PT.translateMany(config(first.PT, { provider: 'google' }), ['One'], {});
+
+  const language = googleEchoSetup(storage);
+  const japanese = await language.PT.translateMany(
+    config(language.PT, { provider: 'google', targetLang: 'ja' }),
+    ['One'],
+    {}
+  );
+  assert.equal(language.fetch.calls.length, 1, 'a different target language is a miss');
+  assert.equal(japanese[0].text, '译:One');
+
+  const fresh = googleEchoSetup(storage);
+  await fresh.PT.translateMany(config(fresh.PT, { provider: 'google' }), ['One'], { noCache: true });
+  assert.equal(fresh.fetch.calls.length, 1, 'noCache bypasses the persistent memory');
+
+  const differentProvider = googleEchoSetup(storage);
+  await differentProvider.PT.translateMany(
+    config(differentProvider.PT, { provider: 'google' }),
+    ['One'],
+    { from: 'en' }
+  );
+  assert.equal(differentProvider.fetch.calls.length, 1, 'a different source language is a miss');
 });
 
 test('Aliyun signs the RPC request and maps API error codes', async () => {

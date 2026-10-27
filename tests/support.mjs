@@ -212,7 +212,9 @@ export function createBrowserStub(options = {}) {
   const sent = [];
   const messageListeners = [];
   const settings = options.settings === undefined ? undefined : options.settings;
-  const storage = createStorage(settings ? { settings } : {});
+  const initial = Object.assign({}, options.storage || {});
+  if (settings) initial.settings = settings;
+  const storage = createStorage(initial);
   const respond = options.respond || (() => ({ ok: true }));
 
   const runtime = {

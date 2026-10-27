@@ -22,8 +22,6 @@
     options: 'pt-options'
   };
 
-  var BATCH_CONCURRENCY = 3;
-
   // Safari supports the page-level contexts but not every Chrome context
   // (for example `password`). Listing them explicitly keeps the page actions
   // reachable on links, images and editable fields without relying on `all`.
@@ -58,9 +56,9 @@
 
       if (result && typeof result.then === 'function') {
         result.then(function (value) { finish(null, value); }, function (error) { finish(error); });
-      } else if (fn.length <= (args || []).length) {
-        finish(null, result);
       }
+      // Otherwise wait for the callback: Safari's native browser methods
+      // report a length of 0 and return undefined even when they accept one.
     });
   }
 
@@ -342,22 +340,10 @@
         var texts = Array.isArray(message.texts) ? message.texts.slice(0, 200) : [];
         if (!texts.length) return { ok: true, results: [] };
 
-        var results = await mapLimit(texts, BATCH_CONCURRENCY, async function (text) {
-          try {
-            var translated = await PT.translate(batchSettings, text, {
-              from: message.from,
-              to: message.to,
-              provider: message.provider
-            });
-            return {
-              ok: true,
-              text: translated.text,
-              detected: translated.detected,
-              provider: translated.provider
-            };
-          } catch (error) {
-            return { ok: false, error: PT.serializeError(error) };
-          }
+        var results = await PT.translateMany(batchSettings, texts, {
+          from: message.from,
+          to: message.to,
+          provider: message.provider
         });
 
         return { ok: true, results: results };

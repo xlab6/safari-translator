@@ -79,6 +79,22 @@ h1 {
     letter-spacing: 0.01em;
 }
 
+.meta {
+    margin: -6px 0 16px;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+
+a.repo {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a.repo:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
 .status {
     display: flex;
     align-items: flex-start;

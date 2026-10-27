@@ -10,7 +10,7 @@
 
   var PT = (global.PT = global.PT || {});
 
-  PT.VERSION = '1.1.0';
+  PT.VERSION = '1.1.9';
 
   /* ------------------------------------------------------------------ *
    * Languages
@@ -269,7 +269,6 @@
       sourceLang: 'auto',
       targetLang: PT.defaultTarget(),
       pageMode: 'replace',
-      autoTranslate: true,
       selectionButton: true,
       theme: 'auto',
 
@@ -323,9 +322,8 @@
     if (['auto', 'light', 'dark'].indexOf(out.theme) === -1) out.theme = 'auto';
     if (out.deeplPlan !== 'pro') out.deeplPlan = 'free';
 
-    // Older saved settings have no autoTranslate field. Treat those as enabled:
-    // automatic translation is the default behaviour from 1.1.0 on.
-    out.autoTranslate = out.autoTranslate !== false;
+    // Automatic translation is an opt-in state; older profiles default to off
+    // so existing installations keep the manual-first workflow they expect.
     out.selectionButton = out.selectionButton !== false;
     out.sourceLang = out.sourceLang === 'auto' ? 'auto' : out.sourceLang;
 
@@ -428,9 +426,10 @@
       }
       if (result && typeof result.then === 'function') {
         result.then(function (value) { finish(null, value); }, function (err) { finish(err); });
-      } else if (area[method].length < 2) {
-        finish(null, result);
       }
+      // Otherwise wait for the callback. Safari's native storage methods
+      // report a length of 0 and return undefined even though they accept a
+      // callback, so the function's arity says nothing about its style.
     });
   }
 
@@ -456,16 +455,74 @@
     });
   };
 
+  // Settings are read-modify-write, so concurrent saves from the same page
+  // must not interleave. Chain them instead of firing them in parallel.
+  var settingsQueue = Promise.resolve();
+
+  function enqueueSettings(task) {
+    var queued = settingsQueue.then(task, task);
+    // A failed save must not block later attempts.
+    settingsQueue = queued.then(function () {}, function () {});
+    return queued;
+  }
+
+  function sameSettings(written, stored) {
+    return Object.keys(written).every(function (key) {
+      return JSON.stringify(written[key]) === JSON.stringify(stored[key]);
+    });
+  }
+
+  function delay(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  function writeSettings(normalized) {
+    function write() {
+      return PT.storageSet({ settings: normalized });
+    }
+
+    function landed() {
+      return PT.loadSettings().then(function (saved) {
+        return sameSettings(normalized, saved);
+      });
+    }
+
+    // Safari has been seen resolving storage.local.set without the value ever
+    // landing in storage. Read it back instead of reporting a false success.
+    return write()
+      .then(landed)
+      .then(function (ok) {
+        if (ok) return true;
+        // The store may commit a little after the promise settles.
+        return delay(150).then(landed);
+      })
+      .then(function (ok) {
+        if (ok) return normalized;
+        return write()
+          .then(function () { return delay(150); })
+          .then(landed)
+          .then(function (retried) {
+            if (retried) return normalized;
+            throw new ProviderError('storage', '设置没有写入本地存储', {
+              hint: '请重启 Safari 后重试；如果仍然失败，请在扩展设置中检查存储权限。'
+            });
+          });
+      });
+  }
+
   PT.saveSettings = function (settings) {
     var normalized = PT.normalizeSettings(settings);
-    return PT.storageSet({ settings: normalized }).then(function () {
-      return normalized;
+    return enqueueSettings(function () {
+      return writeSettings(normalized);
     });
   };
 
   PT.updateSettings = function (patch) {
-    return PT.loadSettings().then(function (current) {
-      return PT.saveSettings(Object.assign({}, current, patch || {}));
+    var delta = patch || {};
+    return enqueueSettings(function () {
+      return PT.loadSettings().then(function (current) {
+        return writeSettings(PT.normalizeSettings(Object.assign({}, current, delta)));
+      });
     });
   };
 

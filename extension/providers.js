@@ -14,6 +14,13 @@
   var ProviderError = PT.ProviderError;
   var DEFAULT_TIMEOUT = 20000;
   var CACHE_LIMIT = 600;
+  var TRANSLATE_CONCURRENCY = 3;
+
+  // Persistent translation memory: survives reloads and browser restarts so
+  // revisiting a page costs no provider quota. Old entries are evicted FIFO.
+  var MEMORY_LIMIT = 6000;
+  var MEMORY_PREFIX = 'ptMemory:';
+  var MEMORY_INDEX_KEY = 'ptMemoryIndex';
 
   var cache = new Map();
   var inflight = new Map();
@@ -265,12 +272,72 @@
    * Google translate_a (no key)
    * ------------------------------------------------------------------ */
 
+  // Joining several short blocks into one request is what makes page
+  // translation feel instant: one round trip instead of one per text node.
+  // Limits stay below each provider's per-request text cap, and MyMemory /
+  // OpenAI keep the one-text path because their pricing or format differs.
+  var JOIN_LIMITS = {
+    google: 4200,
+    aliyun: 4200,
+    azure: 10000,
+    tencent: 1700,
+    deepl: 10000,
+    libre: 4000
+  };
+  var JOIN_SEPARATOR = '\n\n';
+
+  function joinable(value, limit) {
+    return value.length <= limit && value.indexOf(JOIN_SEPARATOR) === -1;
+  }
+
+  function joinGroups(entries, limit) {
+    var groups = [];
+    var current = [];
+    var size = 0;
+
+    entries.forEach(function (entry) {
+      if (!joinable(entry.value, limit)) {
+        if (current.length) {
+          groups.push(current);
+          current = [];
+          size = 0;
+        }
+        groups.push([entry]);
+        return;
+      }
+
+      var extra = current.length ? JOIN_SEPARATOR.length + entry.value.length : entry.value.length;
+      if (current.length && size + extra > limit) {
+        groups.push(current);
+        current = [];
+        size = 0;
+        extra = entry.value.length;
+      }
+      current.push(entry);
+      size += extra;
+    });
+
+    if (current.length) groups.push(current);
+    return groups;
+  }
+
+  async function translateJoined(cfg, provider, values, from, to) {
+    var result = await RUNNERS[provider](cfg, values.join(JOIN_SEPARATOR), from, to);
+    var translated = String((result && result.text) || '').trim();
+    if (!translated) throw emptyResult(provider);
+
+    return {
+      parts: translated.split(/\n{2,}/).map(function (part) { return part.trim(); }),
+      detected: PT.normalizeDetected(provider, (result && result.detected) || '')
+    };
+  }
+
   async function translateGoogle(cfg, text, from, to) {
     var provider = 'google';
     var source = from === 'auto' ? 'auto' : PT.mapLang(provider, from, false);
     var target = PT.mapLang(provider, to, true);
 
-    return translateChunked(text, 1600, to, async function (piece) {
+    return translateChunked(text, 4200, to, async function (piece) {
       var params = new URLSearchParams();
       params.set('client', 'gtx');
       params.set('sl', source);
@@ -788,6 +855,173 @@
     }
   }
 
+  function cacheKeyFor(provider, cfg, from, to, value) {
+    return [provider, configScope(provider, cfg), from, to, value].join('\u0000');
+  }
+
+  function memorySupported() {
+    var api = PT.getApi && PT.getApi();
+    return !!(api && api.storage && api.storage.local);
+  }
+
+  function textHash(value) {
+    var a = 0x811c9dc5;
+    var b = 0x9e3779b9;
+    for (var i = 0; i < value.length; i++) {
+      var code = value.charCodeAt(i);
+      a = Math.imul(a ^ code, 16777619) >>> 0;
+      b = Math.imul(b ^ code, 2246822507) >>> 0;
+      b = (b ^ (b >>> 13)) >>> 0;
+    }
+    return a.toString(36) + '.' + b.toString(36) + '.' + value.length.toString(36);
+  }
+
+  function memoryKeyFor(provider, cfg, from, to, value) {
+    return MEMORY_PREFIX + provider + '|' + configScope(provider, cfg) + '|' +
+      from + '|' + to + '|' + textHash(value);
+  }
+
+  var memoryIndex = null;
+  var memoryKnown = null;
+  var memoryIndexPromise = null;
+  var memoryWrites = Promise.resolve();
+
+  function loadMemoryIndex() {
+    if (memoryIndex) return Promise.resolve(memoryIndex);
+    if (memoryIndexPromise) return memoryIndexPromise;
+
+    memoryIndexPromise = Promise.resolve()
+      .then(function () { return PT.storageGet(MEMORY_INDEX_KEY); })
+      .then(function (stored) {
+        var list = stored && stored[MEMORY_INDEX_KEY];
+        memoryIndex = Array.isArray(list) ? list.filter(function (key) {
+          return typeof key === 'string';
+        }) : [];
+      })
+      .catch(function () {
+        memoryIndex = [];
+      })
+      .then(function () {
+        memoryKnown = new Set(memoryIndex);
+        return memoryIndex;
+      });
+
+    return memoryIndexPromise;
+  }
+
+  async function memoryGet(keys) {
+    var hits = new Map();
+    if (!memorySupported() || !keys || !keys.length) return hits;
+
+    try {
+      await loadMemoryIndex();
+      var wanted = keys.filter(function (key) { return memoryKnown.has(key); });
+      if (!wanted.length) return hits;
+
+      var stored = await PT.storageGet(wanted);
+      wanted.forEach(function (key) {
+        var item = stored && stored[key];
+        if (item && typeof item.text === 'string' && item.text) hits.set(key, item);
+      });
+    } catch (error) {
+      // The memory is an optimization; a broken store must not break translation.
+    }
+
+    return hits;
+  }
+
+  function memorySet(items) {
+    if (!memorySupported() || !items || !items.length) return Promise.resolve();
+
+    var batch = items.filter(function (item) {
+      return item && item.key && item.text;
+    });
+    if (!batch.length) return Promise.resolve();
+
+    memoryWrites = memoryWrites.then(function () {
+      return loadMemoryIndex().then(function () {
+        var fresh = batch.filter(function (item) { return !memoryKnown.has(item.key); });
+        if (!fresh.length) return undefined;
+
+        fresh.forEach(function (item) {
+          memoryKnown.add(item.key);
+          memoryIndex.push(item.key);
+        });
+
+        var evicted = [];
+        while (memoryIndex.length > MEMORY_LIMIT) {
+          var oldest = memoryIndex.shift();
+          memoryKnown.delete(oldest);
+          evicted.push(oldest);
+        }
+
+        var payload = {};
+        payload[MEMORY_INDEX_KEY] = memoryIndex;
+        fresh.forEach(function (item) {
+          payload[item.key] = { text: item.text, detected: item.detected || '', at: Date.now() };
+        });
+
+        return PT.storageSet(payload).then(function () {
+          var api = PT.getApi();
+          var remove = api && api.storage && api.storage.local && api.storage.local.remove;
+          if (!evicted.length || typeof remove !== 'function') return undefined;
+          return new Promise(function (resolve) {
+            try {
+              var result = remove.call(api.storage.local, evicted, function () { resolve(); });
+              if (result && typeof result.then === 'function') result.then(resolve, resolve);
+            } catch (error) {
+              resolve();
+            }
+          });
+        });
+      });
+    }).catch(function () {
+      // Quota exceeded, private mode, or storage unavailable: keep going with
+      // the in-memory cache only.
+    });
+
+    return memoryWrites;
+  }
+
+  function mapLimit(items, limit, worker) {
+    return new Promise(function (resolve) {
+      var results = new Array(items.length);
+      var next = 0;
+      var active = 0;
+      var completed = 0;
+
+      if (!items.length) {
+        resolve(results);
+        return;
+      }
+
+      function finish(index, value) {
+        results[index] = value;
+        active -= 1;
+        completed += 1;
+        if (completed === items.length) resolve(results);
+        else launch();
+      }
+
+      function launch() {
+        while (active < limit && next < items.length) {
+          (function (index) {
+            active += 1;
+            Promise.resolve()
+              .then(function () { return worker(items[index], index); })
+              .then(
+                function (value) { finish(index, value); },
+                function (error) { finish(index, { ok: false, error: PT.serializeError(error) }); }
+              );
+          })(next);
+          next += 1;
+        }
+      }
+
+      launch();
+    });
+  }
+
   /**
    * Translate one string.
    *
@@ -821,7 +1055,8 @@
       });
     }
 
-    var key = [provider, configScope(provider, cfg), from, to, value].join('\u0000');
+    var key = cacheKeyFor(provider, cfg, from, to, value);
+    var mkey = memoryKeyFor(provider, cfg, from, to, value);
 
     if (!opts.noCache) {
       var hit = cacheGet(key);
@@ -830,26 +1065,256 @@
 
     if (inflight.has(key)) return inflight.get(key);
 
-    var promise = RUNNERS[provider](cfg, value, from, to)
-      .then(function (result) {
-        var translated = String((result && result.text) || '').trim();
-        if (!translated) throw emptyResult(provider);
+    var promise = (async function () {
+      if (!opts.noCache) {
+        var remembered = (await memoryGet([mkey])).get(mkey);
+        if (remembered) {
+          var restored = {
+            text: remembered.text,
+            detected: remembered.detected || (from === 'auto' ? PT.detectLanguage(value) : from),
+            provider: provider
+          };
+          cacheSet(key, restored);
+          return Object.assign({}, restored);
+        }
+      }
 
-        var detected = PT.normalizeDetected(
-          provider,
-          (result && result.detected) || (from === 'auto' ? PT.detectLanguage(value) : from)
-        );
+      var result = await RUNNERS[provider](cfg, value, from, to);
+      var translated = String((result && result.text) || '').trim();
+      if (!translated) throw emptyResult(provider);
 
-        var normalized = { text: translated, detected: detected, provider: provider };
-        if (!opts.noCache) cacheSet(key, normalized);
-        return normalized;
-      })
-      .finally(function () {
-        inflight.delete(key);
-      });
+      var detected = PT.normalizeDetected(
+        provider,
+        (result && result.detected) || (from === 'auto' ? PT.detectLanguage(value) : from)
+      );
+
+      var normalized = { text: translated, detected: detected, provider: provider };
+      if (!opts.noCache) {
+        cacheSet(key, normalized);
+        memorySet([{ key: mkey, text: normalized.text, detected: normalized.detected }]);
+      }
+      return normalized;
+    })();
 
     inflight.set(key, promise);
+    promise.finally(function () {
+      inflight.delete(key);
+    }).catch(function () { /* rejection is reported to the caller */ });
+
     return promise;
+  };
+
+  function translateEntry(cfg, entry, provider, from, to, opts) {
+    return PT.translate(cfg, entry.value, {
+      from: from,
+      to: to,
+      provider: provider,
+      noCache: opts.noCache
+    }).then(
+      function (result) {
+        return { ok: true, text: result.text, detected: result.detected, provider: result.provider };
+      },
+      function (error) {
+        return { ok: false, error: PT.serializeError(error) };
+      }
+    );
+  }
+
+  async function translateGroup(cfg, group, provider, from, to, opts) {
+    if (group.length === 1) {
+      var single = await translateEntry(cfg, group[0], provider, from, to, opts);
+      return [{ index: group[0].index, value: single }];
+    }
+
+    var joined;
+    try {
+      joined = await translateJoined(
+        cfg,
+        provider,
+        group.map(function (entry) { return entry.value; }),
+        from,
+        to
+      );
+    } catch (error) {
+      var failure = { ok: false, error: PT.serializeError(error) };
+      return group.map(function (entry) {
+        return { index: entry.index, value: failure };
+      });
+    }
+
+    var usable = joined.parts.length === group.length && joined.parts.every(function (part) { return !!part; });
+    if (!usable) {
+      // Google occasionally rewrites paragraph breaks; fall back to one
+      // request per text so the page never receives misaligned translations.
+      var fallback = await mapLimit(group, TRANSLATE_CONCURRENCY, function (entry) {
+        return translateEntry(cfg, entry, provider, from, to, opts);
+      });
+      return group.map(function (entry, i) {
+        return { index: entry.index, value: fallback[i] };
+      });
+    }
+
+    return group.map(function (entry, i) {
+      var text = joined.parts[i];
+      var detected = joined.detected || (from === 'auto' ? PT.detectLanguage(entry.value) : from);
+      if (!opts.noCache) {
+        cacheSet(entry.key, { text: text, detected: detected, provider: provider });
+      }
+      return {
+        index: entry.index,
+        value: { ok: true, text: text, detected: detected, provider: provider }
+      };
+    });
+  }
+
+  /**
+   * Translate several strings, joining short ones into one request for
+   * providers that accept long text. Returns one result per input, in order.
+   *
+   * @param {object} settings full settings object
+   * @param {string[]} texts
+   * @param {object} [options] { from, to, provider, noCache }
+   * @returns {Promise<Array<{ok: boolean, text?: string, detected?: string, provider?: string, error?: object}>>}
+   */
+  PT.translateMany = async function (settings, texts, options) {
+    var opts = options || {};
+    var cfg = Object.assign(PT.defaultSettings(), settings || {});
+    var provider = opts.provider || cfg.provider;
+    cfg.provider = provider;
+
+    var from = opts.from || cfg.sourceLang || 'auto';
+    var to = opts.to || cfg.targetLang;
+    var values = (Array.isArray(texts) ? texts : []).map(function (text) {
+      return String(text == null ? '' : text).trim();
+    });
+
+    if (!values.length) return [];
+
+    var joinLimit = JOIN_LIMITS[provider];
+    if (!joinLimit) {
+      return mapLimit(values, TRANSLATE_CONCURRENCY, function (value) {
+        return translateEntry(cfg, { value: value }, provider, from, to, opts);
+      });
+    }
+
+    var entries = values.map(function (value) {
+      return {
+        value: value,
+        key: value ? cacheKeyFor(provider, cfg, from, to, value) : '',
+        mkey: value ? memoryKeyFor(provider, cfg, from, to, value) : ''
+      };
+    });
+
+    var results = new Array(entries.length);
+    var misses = [];
+
+    entries.forEach(function (entry, index) {
+      if (!entry.value) {
+        results[index] = Promise.resolve({
+          ok: false,
+          error: PT.serializeError(new ProviderError('empty', PT.errorHints.empty, { provider: provider }))
+        });
+        return;
+      }
+
+      if (!opts.noCache) {
+        var hit = cacheGet(entry.key);
+        if (hit) {
+          results[index] = Promise.resolve({
+            ok: true,
+            text: hit.text,
+            detected: hit.detected,
+            provider: provider
+          });
+          return;
+        }
+      }
+
+      var running = inflight.get(entry.key);
+      if (running) {
+        results[index] = running.then(
+          function (value) {
+            return { ok: true, text: value.text, detected: value.detected, provider: provider };
+          },
+          function (error) {
+            return { ok: false, error: PT.serializeError(error) };
+          }
+        );
+        return;
+      }
+
+      misses.push({ value: entry.value, key: entry.key, mkey: entry.mkey, index: index });
+    });
+
+    if (!misses.length) return Promise.all(results);
+
+    if (!opts.noCache) {
+      var remembered = await memoryGet(misses.map(function (miss) { return miss.mkey; }));
+      if (remembered.size) {
+        var remaining = [];
+        misses.forEach(function (miss) {
+          var item = remembered.get(miss.mkey);
+          if (!item) {
+            remaining.push(miss);
+            return;
+          }
+
+          var detected = item.detected || (from === 'auto' ? PT.detectLanguage(miss.value) : from);
+          cacheSet(miss.key, { text: item.text, detected: detected, provider: provider });
+          results[miss.index] = Promise.resolve({
+            ok: true,
+            text: item.text,
+            detected: detected,
+            provider: provider
+          });
+        });
+        misses = remaining;
+      }
+    }
+
+    if (!misses.length) return Promise.all(results);
+
+    var configError = PT.validateProvider(cfg);
+    if (configError) {
+      var configFailure = {
+        ok: false,
+        error: PT.serializeError(new ProviderError('config', configError.message, {
+          provider: provider,
+          hint: configError.hint
+        }))
+      };
+      misses.forEach(function (miss) {
+        results[miss.index] = Promise.resolve(configFailure);
+      });
+      return Promise.all(results);
+    }
+
+    var groups = joinGroups(misses, joinLimit);
+    var grouped = await mapLimit(groups, TRANSLATE_CONCURRENCY, function (group) {
+      return translateGroup(cfg, group, provider, from, to, opts);
+    });
+
+    var missByIndex = new Map();
+    misses.forEach(function (miss) { missByIndex.set(miss.index, miss); });
+
+    var fresh = [];
+    grouped.forEach(function (items) {
+      items.forEach(function (item) {
+        results[item.index] = Promise.resolve(item.value);
+        var miss = missByIndex.get(item.index);
+        if (!opts.noCache && miss && item.value && item.value.ok && item.value.text) {
+          fresh.push({
+            key: miss.mkey,
+            text: item.value.text,
+            detected: item.value.detected
+          });
+        }
+      });
+    });
+
+    if (fresh.length) await memorySet(fresh);
+
+    return Promise.all(results);
   };
 
   PT.cacheStats = function () {

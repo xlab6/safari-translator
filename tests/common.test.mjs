@@ -91,7 +91,7 @@ test('defaults and normalisation', () => {
   assert.equal(defaults.sourceLang, 'auto');
   assert.equal(defaults.targetLang, 'zh-CN', 'Chinese UI defaults to Chinese');
   assert.equal(defaults.pageMode, 'replace');
-  assert.equal(defaults.autoTranslate, true);
+  assert.equal(defaults.autoTranslate, undefined, 'pages are translated on demand only');
   assert.equal(defaults.selectionButton, true);
   assert.equal(defaults.theme, 'auto');
   assert.equal(defaults.azureEndpoint, 'https://api.cognitive.microsofttranslator.com');
@@ -115,11 +115,7 @@ test('defaults and normalisation', () => {
   assert.equal(normalized.pageMode, 'replace');
   assert.equal(normalized.theme, 'auto');
   assert.equal(normalized.deeplPlan, 'free');
-  assert.equal(normalized.autoTranslate, true, 'old settings without the field enable auto');
   assert.equal(normalized.selectionButton, false);
-
-  const autoOff = PT.normalizeSettings({ autoTranslate: false });
-  assert.equal(autoOff.autoTranslate, false, 'an explicit opt-out is preserved');
 
   const kept = PT.normalizeSettings({ provider: 'tencent', targetLang: 'ja', pageMode: 'replace', theme: 'dark' });
   assert.equal(kept.provider, 'tencent');
@@ -129,6 +125,109 @@ test('defaults and normalisation', () => {
 
   const bilingual = PT.normalizeSettings({ pageMode: 'bilingual' });
   assert.equal(bilingual.pageMode, 'bilingual', 'an explicit bilingual choice is preserved');
+});
+
+test('settings saves are written and verified', async () => {
+  const browser = createBrowserStub({ settings: { provider: 'mymemory' } });
+  const { PT } = withPT({ browser });
+
+  const saved = await PT.updateSettings({ provider: 'deepl' });
+  assert.equal(saved.provider, 'deepl');
+  assert.equal(browser.storage.data.settings.provider, 'deepl', 'written to storage');
+
+  const reloaded = await PT.loadSettings();
+  assert.equal(reloaded.provider, 'deepl', 'a fresh read sees the change');
+});
+
+test('settings work with Safari callback-style storage methods', async () => {
+  // Safari's native storage methods report a length of 0 and return
+  // undefined even though they invoke the supplied callback.
+  const data = { settings: { provider: 'google', targetLang: 'ja' } };
+  const browser = {
+    runtime: { lastError: null },
+    i18n: { getUILanguage: () => 'zh-CN' },
+    storage: {
+      local: {
+        get(...args) {
+          const keys = args[0];
+          const callback = args[args.length - 1];
+          const value = keys == null ? data : typeof keys === 'string' ? { [keys]: data[keys] } : {};
+          if (typeof callback === 'function') {
+            setTimeout(() => callback(JSON.parse(JSON.stringify(value))), 0);
+            return undefined;
+          }
+          return Promise.resolve(value);
+        },
+        set(...args) {
+          const items = args[0];
+          const callback = args[args.length - 1];
+          Object.assign(data, JSON.parse(JSON.stringify(items)));
+          if (typeof callback === 'function') {
+            setTimeout(callback, 0);
+            return undefined;
+          }
+          return Promise.resolve();
+        }
+      },
+      onChanged: { addListener() {}, removeListener() {} }
+    }
+  };
+  const { PT } = withPT({ browser });
+
+  const loaded = await PT.loadSettings();
+  assert.equal(loaded.provider, 'google', 'the stored provider is read back');
+  assert.equal(loaded.targetLang, 'ja');
+
+  const saved = await PT.updateSettings({ provider: 'deepl', deeplKey: 'k' });
+  assert.equal(saved.provider, 'deepl');
+  assert.equal(data.settings.provider, 'deepl', 'the verified write lands');
+});
+
+test('a dropped storage write is retried once', async () => {
+  const browser = createBrowserStub({ settings: { provider: 'mymemory', targetLang: 'ja' } });
+  const realSet = browser.storage.local.set.bind(browser.storage.local);
+  let drops = 1;
+  browser.storage.local.set = (items, callback) => {
+    if (drops-- > 0) {
+      if (callback) setTimeout(callback, 0);
+      return Promise.resolve();
+    }
+    return realSet(items, callback);
+  };
+
+  const { PT } = withPT({ browser });
+  const saved = await PT.updateSettings({ provider: 'google' });
+  assert.equal(saved.provider, 'google');
+  assert.equal(browser.storage.data.settings.provider, 'google', 'the retry lands');
+  assert.equal(browser.storage.data.settings.targetLang, 'ja', 'unrelated settings survive');
+});
+
+test('a write that never lands is reported as a failure', async () => {
+  const browser = createBrowserStub({ settings: { provider: 'mymemory' } });
+  browser.storage.local.set = (items, callback) => {
+    if (callback) setTimeout(callback, 0);
+    return Promise.resolve();
+  };
+
+  const { PT } = withPT({ browser });
+  await assert.rejects(
+    () => PT.updateSettings({ provider: 'deepl' }),
+    (error) => error.code === 'storage'
+  );
+});
+
+test('concurrent saves keep every change', async () => {
+  const browser = createBrowserStub({ settings: { provider: 'mymemory', targetLang: 'zh-CN' } });
+  const { PT } = withPT({ browser });
+
+  await Promise.all([
+    PT.updateSettings({ provider: 'deepl' }),
+    PT.updateSettings({ targetLang: 'ja' })
+  ]);
+
+  const stored = browser.storage.data.settings;
+  assert.equal(stored.provider, 'deepl');
+  assert.equal(stored.targetLang, 'ja');
 });
 
 test('provider validation explains what is missing', () => {

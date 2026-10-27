@@ -2,9 +2,13 @@
  * Safari Translator — content script.
  *
  * UX contract:
- *   - Whole pages are translated automatically when `autoTranslate` is on
- *     (the default). It can be switched off in the popup or settings.
- *   - Same-site full navigations and SPA route changes are translated too.
+ *   - Pages are translated only when the user asks (popup, right-click menu,
+ *     or selection button). No page is translated on load by default.
+ *   - When a page is translated, its origin (site) is remembered. While that
+ *     site has not been restored, same-site full navigations and SPA route
+ *     changes are translated automatically so the reading state is preserved.
+ *   - Restoring the original text on a page clears that site from the
+ *     remembered set, so subsequent navigations stay in the original language.
  *   - Selecting text shows a small floating "翻译" button.
  *   - Right-click still offers explicit translate/restore actions.
  *   - Page translation inserts a bilingual copy (or replaces text) and can be
@@ -24,15 +28,15 @@
   var MAX_SELECTION = 5000;
   var MAX_BLOCKS = 400;
   var MAX_TEXT_NODES = 700;
-  var BATCH_SIZE = 8;
-  var BATCH_CHARS = 2600;
+  var BATCH_SIZE = 96;
+  var BATCH_CHARS = 12000;
   var VIEWPORT_MARGIN = 240;
   var BACKGROUND_DELAY = 450;
   var AUTO_START_DELAY = 600;
-  var AUTO_ROUTE_DEBOUNCE = 700;
-  var AUTO_ROUTE_SETTLE = 450;
-  var AUTO_ROUTE_MAX_WAIT = 3000;
-  var AUTO_URL_POLL = 700;
+  var AUTO_ROUTE_DEBOUNCE = 120;
+  var AUTO_ROUTE_SETTLE = 150;
+  var AUTO_ROUTE_MAX_WAIT = 1500;
+  var AUTO_URL_POLL = 250;
   var FATAL_CODES = { auth: 1, config: 1, quota: 1, lang: 1 };
 
   var SKIP_SELECTOR = [
@@ -60,6 +64,8 @@
     selection: null,
     last: null,
     lastRect: null,
+    anchor: null,
+    anchorOffset: null,
     requestSeq: 0,
     toastTimer: null,
     auto: {
@@ -71,14 +77,18 @@
       listening: false,
       routeSeq: 0
     },
+    translatedOrigins: new Set(),
     page: {
       status: 'idle', // idle | running | translated
       running: false,
       cancelled: false,
       runId: 0,
       mode: 'replace',
+      target: null,
       added: [],
       originals: new Map(),
+      applied: new Map(),
+      blocks: new Map(),
       total: 0,
       done: 0,
       visible: 0,
@@ -499,70 +509,113 @@
 
     .pt-progress {
       position: fixed;
-      right: 18px;
-      bottom: 18px;
-      width: min(300px, calc(100vw - 36px));
-      padding: 11px 13px 12px;
-      border-radius: 12px;
+      right: 20px;
+      bottom: 20px;
+      width: 76px;
+      height: 76px;
+      pointer-events: auto;
+      animation: pt-pop .18s cubic-bezier(.2, .8, .2, 1);
+    }
+    .pt-progress[hidden] { display: none; }
+
+    .pt-hud {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
       border: 1px solid var(--pt-border);
       background: var(--pt-bg);
       box-shadow: var(--pt-shadow);
-      pointer-events: auto;
-      animation: pt-rise .16s ease-out;
     }
-    .pt-progress[hidden] { display: none; }
-    .pt-progress-head { display: flex; align-items: center; gap: 8px; }
-    .pt-progress-title { font-size: 12.5px; font-weight: 600; color: var(--pt-text); }
-    .pt-spinner {
-      width: 13px;
-      height: 13px;
-      border-radius: 50%;
-      border: 2px solid var(--pt-accent-soft);
-      border-top-color: var(--pt-accent);
-      animation: pt-spin .8s linear infinite;
-      flex: 0 0 auto;
-    }
-    @keyframes pt-spin { to { transform: rotate(360deg); } }
-
-    .pt-link {
-      border: 0;
-      background: transparent;
-      color: var(--pt-muted);
-      font-size: 11.5px;
-      cursor: pointer;
-      padding: 2px 0;
-      pointer-events: auto;
-    }
-    .pt-link:hover { color: var(--pt-danger); }
-
-    .pt-bar {
-      height: 4px;
-      margin-top: 9px;
-      border-radius: 2px;
-      background: var(--pt-bg-soft);
-      overflow: hidden;
-    }
-    .pt-bar i {
-      display: block;
+    .pt-ring {
+      position: absolute;
+      inset: 0;
+      width: 100%;
       height: 100%;
-      width: 0;
-      border-radius: 2px;
-      background: linear-gradient(90deg, #2f6bff, #7c5cff);
-      transition: width .25s ease;
+      transform: rotate(-90deg);
     }
-    .pt-progress-meta {
-      margin-top: 6px;
-      font-size: 11px;
-      color: var(--pt-faint);
+    .pt-ring circle { fill: none; stroke-width: 4; }
+    .pt-ring-bg { stroke: var(--pt-bg-soft); }
+    .pt-ring-fill {
+      stroke: var(--pt-accent);
+      stroke-linecap: round;
+      stroke-dasharray: 282.743;
+      stroke-dashoffset: 282.743;
+      transition: stroke-dashoffset .3s ease;
+    }
+
+    .pt-hud-center {
+      position: relative;
       display: flex;
-      justify-content: space-between;
-      gap: 8px;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 0 7px;
+      text-align: center;
     }
+    .pt-percent {
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.1;
+      letter-spacing: -.2px;
+      color: var(--pt-text);
+      font-variant-numeric: tabular-nums;
+    }
+    .pt-progress-title {
+      font-size: 8.5px;
+      font-weight: 600;
+      line-height: 1.2;
+      color: var(--pt-muted);
+      white-space: nowrap;
+    }
+    .pt-progress-count {
+      font-size: 8px;
+      line-height: 1.15;
+      color: var(--pt-faint);
+      font-variant-numeric: tabular-nums;
+    }
+    .pt-progress-note {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      padding: 0;
+      border: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    .pt-progress-cancel {
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border-radius: 50%;
+      border: 1px solid var(--pt-border);
+      background: var(--pt-bg);
+      color: var(--pt-faint);
+      box-shadow: 0 2px 8px rgba(15, 23, 42, .16);
+      cursor: pointer;
+      pointer-events: auto;
+      transition: color .12s ease, border-color .12s ease, opacity .12s ease;
+    }
+    .pt-progress-cancel svg { width: 8px; height: 8px; display: block; }
+    .pt-progress-cancel:hover { color: var(--pt-danger); border-color: rgba(217, 45, 32, .35); }
+    .pt-progress-cancel:disabled { opacity: .4; cursor: default; }
 
     @media (prefers-reduced-motion: reduce) {
       .pt-panel, .pt-sel-btn, .pt-toast, .pt-progress { animation: none; }
       .pt-loading i { animation: none; }
-      .pt-spinner { animation-duration: 1.8s; }
+      .pt-ring-fill { transition: none; }
     }
   `;
 
@@ -629,14 +682,19 @@
         '</div>' +
 
         '<section class="pt-progress" data-role="progress" hidden aria-label="页面翻译进度">' +
-          '<div class="pt-progress-head">' +
-            '<span class="pt-spinner" data-role="spinner"></span>' +
-            '<span class="pt-progress-title" data-role="progress-title">正在翻译页面</span>' +
-            '<span class="pt-spacer"></span>' +
-            '<button type="button" class="pt-link" data-action="cancel">取消</button>' +
+          '<div class="pt-hud">' +
+            '<svg class="pt-ring" viewBox="0 0 100 100" aria-hidden="true">' +
+              '<circle class="pt-ring-bg" cx="50" cy="50" r="45"></circle>' +
+              '<circle class="pt-ring-fill" cx="50" cy="50" r="45" data-role="ring"></circle>' +
+            '</svg>' +
+            '<div class="pt-hud-center">' +
+              '<span class="pt-percent" data-role="percent">0%</span>' +
+              '<span class="pt-progress-title" data-role="progress-title">正在翻译</span>' +
+              '<span class="pt-progress-count" data-role="progress-count">0 / 0</span>' +
+              '<span class="pt-progress-note" data-role="progress-note"></span>' +
+            '</div>' +
+            '<button type="button" class="pt-progress-cancel" data-action="cancel" title="取消翻译" aria-label="取消翻译">' + ICONS.close + '</button>' +
           '</div>' +
-          '<div class="pt-bar"><i data-role="bar"></i></div>' +
-          '<div class="pt-progress-meta"><span data-role="progress-count">0 / 0</span><span data-role="progress-note"></span></div>' +
         '</section>' +
       '</div>';
 
@@ -692,6 +750,21 @@
     if (!select.value) {
       select.value = PT.defaultTarget();
     }
+  }
+
+  // Safari does not always deliver storage.onChanged to content scripts in
+  // tabs that were already open. Read the stored settings before an explicit
+  // action so a provider switch made in the options page always applies.
+  async function refreshSettings() {
+    try {
+      state.settings = await PT.loadSettings();
+    } catch (error) {
+      if (!state.settings) state.settings = PT.defaultSettings();
+    }
+    updateProviderLabel();
+    syncTargetSelect();
+    applyTheme();
+    return state.settings;
   }
 
   /* ------------------------------------------------------------------ *
@@ -773,6 +846,10 @@
     q('langs').textContent = PT.languageName('auto') + ' → ' + PT.languageName(state.settings ? state.settings.targetLang : PT.defaultTarget());
     setActionsEnabled(false);
     positionPanel(rect);
+    state.anchorOffset = state.anchor ? {
+      left: (parseFloat(state.panel.style.left) || 0) - ((rect && rect.left) || 0),
+      top: (parseFloat(state.panel.style.top) || 0) - ((rect && rect.top) || 0)
+    } : null;
     syncTargetSelect();
   }
 
@@ -841,6 +918,8 @@
     state.requestSeq++;
     state.panel.classList.remove('pt-open');
     state.last = null;
+    state.anchor = null;
+    state.anchorOffset = null;
     cancelSpeech();
   }
 
@@ -945,6 +1024,42 @@
     };
   }
 
+  function liveSelectionRange() {
+    var selection = window.getSelection && window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+    try {
+      var range = selection.getRangeAt(0);
+      if (nodeInsideUI(range.commonAncestorContainer)) return null;
+      return range.cloneRange();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function rangeRect(range) {
+    if (!range) return null;
+    try {
+      if (range.startContainer && range.startContainer.isConnected === false) return null;
+      var rect = null;
+      if (range.getBoundingClientRect) rect = range.getBoundingClientRect();
+      if ((!rect || (!rect.width && !rect.height)) && range.getClientRects) {
+        var rects = range.getClientRects();
+        if (rects && rects.length) rect = rects[rects.length - 1];
+      }
+      if (!rect) return null;
+      return {
+        left: Number(rect.left) || 0,
+        top: Number(rect.top) || 0,
+        right: Number(rect.right) || Number(rect.left) || 0,
+        bottom: Number(rect.bottom) || Number(rect.top) || 0,
+        width: Number(rect.width) || 0,
+        height: Number(rect.height) || 0
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   function showSelectionButton(selection) {
     if (!state.settings || state.settings.selectionButton === false) return;
     if (!selection || !selection.text) return;
@@ -976,6 +1091,33 @@
 
   function hideSelectionButton() {
     if (state.button) state.button.style.display = 'none';
+  }
+
+  var anchorFrame = 0;
+
+  // The panel is fixed to the viewport, so it has to be moved by hand to stay
+  // next to the selected text while the page scrolls.
+  function followSelectionAnchor() {
+    var panel = state.panel;
+    if (!panel || !panel.classList.contains('pt-open') || !state.anchor || !state.anchorOffset) return;
+    var rect = rangeRect(state.anchor);
+    if (!rect) {
+      state.anchor = null;
+      state.anchorOffset = null;
+      return;
+    }
+    state.lastRect = rect;
+    panel.style.left = Math.round(rect.left + state.anchorOffset.left) + 'px';
+    panel.style.top = Math.round(rect.top + state.anchorOffset.top) + 'px';
+  }
+
+  function scheduleFollow() {
+    if (anchorFrame) return;
+    var run = function () {
+      anchorFrame = 0;
+      followSelectionAnchor();
+    };
+    anchorFrame = window.requestAnimationFrame ? window.requestAnimationFrame(run) : setTimeout(run, 16);
   }
 
   function dismissSelectionUI() {
@@ -1031,13 +1173,7 @@
       showToast('选中的内容过长，请分段翻译');
       return;
     }
-    if (!state.settings) {
-      try {
-        state.settings = await PT.loadSettings();
-      } catch (error) {
-        state.settings = PT.defaultSettings();
-      }
-    }
+    await refreshSettings();
 
     var selection = { text: value, rect: rect || pointRect() };
     state.selection = selection;
@@ -1103,6 +1239,13 @@
     return PT.normalizeText(clone.textContent || '');
   }
 
+  function directTranslation(element) {
+    for (var child = element.firstElementChild; child; child = child.nextElementSibling) {
+      if (child.hasAttribute && child.hasAttribute('data-pt-translation')) return child;
+    }
+    return null;
+  }
+
   function collectBlocks(targetLang) {
     if (!document.body) return [];
     var units = [];
@@ -1119,6 +1262,11 @@
       var text = normalizeBlockText(element);
       if (!text || text.length > 5000) continue;
       if (!PT.shouldTranslate(text, targetLang)) continue;
+
+      // Content that a previous route already translated stays untouched.
+      // If the site re-rendered the block with different text, it is
+      // collected again and the stale translation is replaced on apply.
+      if (directTranslation(element) && state.page.blocks.get(element) === text) continue;
 
       units.push({ element: element, text: text });
     }
@@ -1140,6 +1288,14 @@
 
       var text = PT.normalizeText(node.nodeValue);
       if (!PT.shouldTranslate(text, targetLang)) continue;
+
+      if (state.page.originals.has(node)) {
+        // Still our own translation: nothing to do. A different value means
+        // the site replaced the text in place, so translate the new value.
+        if (state.page.applied.get(node) === node.nodeValue) continue;
+        state.page.originals.delete(node);
+        state.page.applied.delete(node);
+      }
 
       units.push({
         node: node,
@@ -1307,9 +1463,22 @@
    * Page translation — apply / restore
    * ------------------------------------------------------------------ */
 
+  function dropAdded(span) {
+    var index = state.page.added.indexOf(span);
+    if (index >= 0) state.page.added.splice(index, 1);
+  }
+
   function applyBlockTranslation(unit, translated, targetLang) {
     var element = unit.element;
     if (!element || !element.isConnected) return false;
+
+    // A block whose text changed in place may still carry its old translation.
+    var stale = directTranslation(element);
+    while (stale) {
+      dropAdded(stale);
+      stale.remove();
+      stale = directTranslation(element);
+    }
 
     var span = document.createElement('span');
     span.setAttribute('data-pt-translation', '');
@@ -1323,6 +1492,7 @@
 
     element.appendChild(span);
     state.page.added.push(span);
+    state.page.blocks.set(element, unit.text);
     return true;
   }
 
@@ -1330,35 +1500,40 @@
     var node = unit.node;
     if (!node || !node.isConnected) return false;
 
-    if (!state.page.originals.has(node)) {
-      state.page.originals.set(node, unit.original);
-    }
     var raw = unit.original;
     var lead = (raw.match(/^\s*/) || [''])[0];
     var trail = (raw.match(/\s*$/) || [''])[0];
     node.nodeValue = lead + translated + trail;
+    state.page.originals.set(node, raw);
+    state.page.applied.set(node, node.nodeValue);
     return true;
   }
 
+  var RING_LENGTH = 2 * Math.PI * 45;
+
   function updateProgress(done, total, note) {
-    var bar = q('bar');
     var percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
-    if (bar) bar.style.width = percent + '%';
+    var ring = q('ring');
+    if (ring) ring.style.strokeDashoffset = String(RING_LENGTH * (1 - percent / 100));
+    var percentEl = q('percent');
+    if (percentEl) percentEl.textContent = percent + '%';
     var count = q('progress-count');
     if (count) count.textContent = done + ' / ' + total;
     var noteEl = q('progress-note');
     if (noteEl) noteEl.textContent = note || '';
+    var progress = q('progress');
+    if (progress) progress.title = note || '';
   }
 
   function showProgress(total, note) {
     var progress = q('progress');
     progress.hidden = false;
-    q('spinner').style.display = '';
-    q('progress-title').textContent = '正在翻译页面';
+    q('progress-title').textContent = '正在翻译';
     var cancel = progress.querySelector('[data-action="cancel"]');
     if (cancel) {
-      cancel.textContent = '取消';
       cancel.disabled = false;
+      cancel.setAttribute('title', '取消翻译');
+      cancel.setAttribute('aria-label', '取消翻译');
     }
     updateProgress(0, total, note || '');
   }
@@ -1371,22 +1546,49 @@
   function finishProgress(runId, delay) {
     setTimeout(function () {
       if (state.page.runId === runId) hideProgress();
-    }, delay || 1200);
+    }, typeof delay === 'number' ? delay : 1200);
   }
 
   /* ------------------------------------------------------------------ *
    * Automatic page translation
    * ------------------------------------------------------------------ */
 
-  function autoTranslateEnabled() {
-    return !!(state.settings && state.settings.autoTranslate);
+  function currentOrigin() {
+    return location.origin || location.protocol + '//' + location.hostname;
+  }
+
+  async function loadTranslatedOrigins() {
+    try {
+      var stored = await PT.storageGet('ptTranslatedOrigins');
+      var list = stored && stored.ptTranslatedOrigins;
+      state.translatedOrigins = new Set(Array.isArray(list) ? list : []);
+    } catch (error) {
+      state.translatedOrigins = new Set();
+    }
+  }
+
+  function rememberTranslatedOrigin() {
+    var origin = currentOrigin();
+    state.translatedOrigins.add(origin);
+    PT.storageSet({ ptTranslatedOrigins: Array.from(state.translatedOrigins) }).catch(function () {});
+    startNavigationWatcher();
+  }
+
+  function forgetTranslatedOrigin() {
+    var origin = currentOrigin();
+    state.translatedOrigins.delete(origin);
+    PT.storageSet({ ptTranslatedOrigins: Array.from(state.translatedOrigins) }).catch(function () {});
+    if (!state.translatedOrigins.has(origin) && state.auto.pollTimer) {
+      clearInterval(state.auto.pollTimer);
+      state.auto.pollTimer = null;
+    }
   }
 
   function isAutoEligible() {
-    if (!autoTranslateEnabled()) return false;
     if (window.top !== window) return false;
     var protocol = location.protocol;
     if (protocol !== 'http:' && protocol !== 'https:' && protocol !== 'file:') return false;
+    if (!state.translatedOrigins.has(currentOrigin())) return false;
     return !!document.body;
   }
 
@@ -1421,7 +1623,7 @@
   }
 
   function scheduleAutoStart(delay) {
-    if (!autoTranslateEnabled()) return;
+    if (!isAutoEligible()) return;
     if (state.auto.timer) clearTimeout(state.auto.timer);
     state.auto.timer = setTimeout(function () {
       state.auto.timer = null;
@@ -1429,12 +1631,25 @@
     }, typeof delay === 'number' ? delay : AUTO_START_DELAY);
   }
 
+  function prunePageState() {
+    var page = state.page;
+    page.added = page.added.filter(function (span) {
+      return span && span.isConnected;
+    });
+    page.originals.forEach(function (original, node) {
+      if (node && node.isConnected) return;
+      page.originals.delete(node);
+      page.applied.delete(node);
+    });
+    page.blocks.forEach(function (source, element) {
+      if (element && element.isConnected) return;
+      page.blocks.delete(element);
+    });
+  }
+
   function autoTranslateNow() {
     if (!isAutoEligible()) return;
-    if (state.page.running || state.page.status === 'translated') return;
-    if (state.page.added.length || state.page.originals.size) {
-      restorePage({ silent: true });
-    }
+    if (state.page.running) return;
 
     var text = document.body ? document.body.textContent : '';
     if (!text || !text.trim()) return;
@@ -1447,7 +1662,7 @@
     page.cancelled = true;
     page.running = false;
     page.runId++;
-    page.status = 'idle';
+    page.status = page.added.length || page.originals.size ? 'translated' : 'idle';
     stopVisibilityObserver(page);
     hideProgress();
   }
@@ -1493,15 +1708,14 @@
 
     state.auto.routeTimer = setTimeout(function () {
       state.auto.routeTimer = null;
-      if (!autoTranslateEnabled()) return;
+      if (!isAutoEligible()) return;
       if (seq !== state.auto.routeSeq) return;
 
-      // The old document/route is stale. Stop its requests, undo any partial
-      // translation, then wait for the new view to finish rendering.
+      // The old route's in-flight requests are stale, but the translations
+      // it already applied are kept: SPA shells such as a sidebar stay on
+      // the page and must not be translated again.
       abortPageForNavigation();
-      if (state.page.added.length || state.page.originals.size) {
-        restorePage({ silent: true });
-      }
+      prunePageState();
 
       waitForRouteContent(function () {
         if (seq !== state.auto.routeSeq) return;
@@ -1511,7 +1725,7 @@
   }
 
   function checkAutoNavigation() {
-    if (!autoTranslateEnabled()) return;
+    if (!isAutoEligible()) return;
     var key = navigationKey();
     if (key === state.auto.lastKey) return;
     state.auto.lastKey = key;
@@ -1519,7 +1733,6 @@
   }
 
   function startNavigationWatcher() {
-    if (!autoTranslateEnabled()) return;
     if (state.auto.pollTimer) return;
 
     state.auto.lastKey = navigationKey();
@@ -1528,12 +1741,18 @@
       state.auto.listening = true;
       window.addEventListener('popstate', checkAutoNavigation);
       window.addEventListener('hashchange', checkAutoNavigation);
+      // Router links update history in their own click handler, so inspect on
+      // the next task instead of waiting for the URL poll.
+      window.addEventListener('click', function () {
+        setTimeout(checkAutoNavigation, 0);
+      }, true);
     }
   }
 
   function initAutoTranslation() {
-    if (!autoTranslateEnabled()) return;
-    startNavigationWatcher();
+    // Watch routes only for sites that resume automatically, or once a manual
+    // translation has remembered the site (see rememberTranslatedOrigin).
+    if (state.translatedOrigins.has(currentOrigin())) startNavigationWatcher();
     if (state.auto.initialized) return;
     state.auto.initialized = true;
 
@@ -1550,13 +1769,9 @@
       return;
     }
 
-    if (!state.settings) {
-      try {
-        state.settings = await PT.loadSettings();
-      } catch (error) {
-        state.settings = PT.defaultSettings();
-      }
-    }
+    // Automatic runs happen right after load and the cached copy is current;
+    // an explicit action must pick up changes made in the options tab.
+    if (!auto) await refreshSettings();
 
     var problem = PT.validateProvider(state.settings);
     if (problem) {
@@ -1570,16 +1785,27 @@
       return;
     }
 
-    if (page.added.length || page.originals.size) {
+    var target = state.settings.targetLang;
+    prunePageState();
+
+    // A different language or layout invalidates every existing translation.
+    // Otherwise keep them and only fill in what the new route added.
+    if ((page.added.length || page.originals.size) && (page.target !== target || page.mode !== mode)) {
       restorePage({ silent: true });
     }
 
-    var target = state.settings.targetLang;
     var units = mode === 'replace' ? collectTextNodes(target) : collectBlocks(target);
 
     if (!units.length) {
-      if (!auto) {
-        showToast('没有找到需要翻译的文本。若页面已是目标语言，或内容位于代码块中，将不会翻译。');
+      if (page.added.length || page.originals.size) {
+        page.status = 'translated';
+        rememberTranslatedOrigin();
+        if (!auto) showToast('页面已翻译，没有新的内容');
+      } else {
+        page.status = 'idle';
+        if (!auto) {
+          showToast('没有找到需要翻译的文本。若页面已是目标语言，或内容位于代码块中，将不会翻译。');
+        }
       }
       return;
     }
@@ -1589,12 +1815,11 @@
     page.cancelled = false;
     page.status = 'running';
     page.mode = mode || 'replace';
+    page.target = target;
     page.total = units.length;
     page.done = 0;
     page.visible = 0;
     page.offscreen = 0;
-    page.added = [];
-    page.originals = new Map();
     stopVisibilityObserver(page);
 
     var visibleQueue = createQueue();
@@ -1618,6 +1843,7 @@
     var progressNote = page.offscreen ? '优先翻译可视区' : '';
     if (auto) progressNote = progressNote ? '自动翻译 · ' + progressNote : '自动翻译';
     showProgress(units.length, progressNote);
+    var runStartedAt = Date.now();
 
     var backgroundReady = false;
     var done = 0;
@@ -1696,18 +1922,22 @@
 
     if (page.cancelled) {
       page.status = page.added.length || page.originals.size ? 'translated' : 'idle';
+      if (page.status === 'translated') rememberTranslatedOrigin();
       hideProgress();
       showToast('已取消翻译，已翻译的内容仍然保留');
       return;
     }
 
     if (fatal) {
-      page.status = done ? 'translated' : 'idle';
-      q('spinner').style.display = 'none';
+      page.status = done || page.added.length || page.originals.size ? 'translated' : 'idle';
+      if (page.status === 'translated') rememberTranslatedOrigin();
       q('progress-title').textContent = auto ? '自动翻译中断' : '翻译中断';
       updateProgress(done + failed, units.length, '');
       var cancelButton = q('progress').querySelector('[data-action="cancel"]');
-      if (cancelButton) cancelButton.textContent = '关闭';
+      if (cancelButton) {
+        cancelButton.setAttribute('title', '关闭');
+        cancelButton.setAttribute('aria-label', '关闭');
+      }
       showToast(
         (auto ? '自动翻译中断：' : '翻译中断：') + (fatal.message || '未知错误'),
         fatal.code === 'config' || fatal.code === 'auth' ? '打开设置' : null,
@@ -1717,7 +1947,8 @@
       return;
     }
 
-    page.status = done ? 'translated' : 'idle';
+    page.status = done || page.added.length || page.originals.size ? 'translated' : 'idle';
+    if (page.status === 'translated') rememberTranslatedOrigin();
 
     if (failed) {
       q('progress-title').textContent = '部分完成';
@@ -1730,7 +1961,8 @@
       if (!auto) {
         showToast('已完成 ' + done + ' 段翻译', '还原原文', function () { restorePage(); });
       }
-      finishProgress(runId, 1600);
+      // Cache hits finish in a few milliseconds; do not leave a HUD behind.
+      finishProgress(runId, Date.now() - runStartedAt < 400 ? 0 : 1600);
     }
   }
 
@@ -1754,6 +1986,9 @@
 
     page.added = [];
     page.originals = new Map();
+    page.applied = new Map();
+    page.blocks = new Map();
+    page.target = null;
     page.status = 'idle';
     page.total = 0;
     page.done = 0;
@@ -1763,6 +1998,7 @@
     hideProgress();
 
     if (!options || !options.silent) {
+      if (hadContent) forgetTranslatedOrigin();
       showToast(hadContent ? '已还原原文' : '当前页面没有译文');
     }
   }
@@ -1778,6 +2014,7 @@
       var selection = state.selection;
       hideSelectionButton();
       if (!selection) return;
+      state.anchor = liveSelectionRange();
       translateSelection(selection.text, selection.rect);
     });
 
@@ -1815,8 +2052,9 @@
         case 'cancel':
           if (state.page.running) {
             state.page.cancelled = true;
-            action.textContent = '正在取消…';
             action.disabled = true;
+            action.setAttribute('title', '正在取消');
+            action.setAttribute('aria-label', '正在取消');
           } else {
             hideProgress();
           }
@@ -1876,13 +2114,18 @@
       } catch (e) { /* ignore */ }
     }
 
-    window.addEventListener('scroll', hideSelectionButton, true);
+    window.addEventListener('scroll', function () {
+      hideSelectionButton();
+      scheduleFollow();
+    }, true);
+    window.addEventListener('resize', scheduleFollow);
 
     api.runtime.onMessage.addListener(function (message, sender, sendResponse) {
       if (!message || message.__pt !== true) return undefined;
 
       switch (message.type) {
         case 'pt:translate-selection':
+          state.anchor = liveSelectionRange();
           translateSelection(message.text || (readSelection() || {}).text, message.rect || null);
           sendResponse({ ok: true });
           return undefined;
@@ -1913,34 +2156,11 @@
     });
 
     PT.onSettingsChanged(function (settings) {
-      var wasAuto = !!(state.settings && state.settings.autoTranslate);
       state.settings = settings;
       updateProviderLabel();
       syncTargetSelect();
       applyTheme();
       if (!settings.selectionButton) hideSelectionButton();
-
-      if (!wasAuto && settings.autoTranslate) {
-        startNavigationWatcher();
-        state.auto.initialized = true;
-        whenDocumentReady(function () {
-          scheduleAutoStart(0);
-        });
-      } else if (wasAuto && !settings.autoTranslate) {
-        if (state.auto.timer) {
-          clearTimeout(state.auto.timer);
-          state.auto.timer = null;
-        }
-        if (state.auto.routeTimer) {
-          clearTimeout(state.auto.routeTimer);
-          state.auto.routeTimer = null;
-        }
-        state.auto.routeSeq++;
-        if (state.auto.pollTimer) {
-          clearInterval(state.auto.pollTimer);
-          state.auto.pollTimer = null;
-        }
-      }
     });
   }
 
@@ -1966,8 +2186,9 @@
     syncTargetSelect();
     applyTheme();
 
-    // Automatic translation is the default. It only starts after the document
-    // is ready so pages that render late still get a complete first pass.
+    // Only sites the user has translated before resume automatically; other
+    // pages wait for an explicit translate action.
+    await loadTranslatedOrigins();
     initAutoTranslation();
 
     // Expose a tiny hook for the bundled demo page and for debugging.

@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createPage,
@@ -8,6 +8,16 @@ import {
   wait,
   waitFor
 } from './support.mjs';
+
+// Content pages keep route watchers alive; close every page after its test so
+// the test process can exit.
+const openPages = [];
+afterEach(() => {
+  while (openPages.length) {
+    const window = openPages.pop();
+    try { window.close(); } catch (error) { /* already closed */ }
+  }
+});
 
 const ARTICLE = `
   <main>
@@ -44,19 +54,20 @@ async function contentPage(options = {}) {
         sourceLang: 'auto',
         targetLang: 'zh-CN',
         pageMode: 'bilingual',
-        // Most tests exercise explicit actions. Automatic translation has its
-        // own tests below and is disabled here to keep request counts stable.
-        autoTranslate: false,
         selectionButton: true,
         theme: 'auto'
       },
       options.settings || {}
     ),
+    // Automatic translation only resumes on sites the user has translated
+    // before, so tests opt in by seeding the remembered origins.
+    storage: options.storage,
     respond: options.respond || defaultRespond,
     scripts: ['content.js'],
     url: options.url || 'https://example.com/article'
   });
   stubRangeRect(page.window);
+  openPages.push(page.window);
   const content = await bootContent(page);
   return { ...page, content };
 }
@@ -91,8 +102,23 @@ test('the content script boots without translating anything', async () => {
   assert.equal(page.browser.sent.length, 0, 'no request is made on load');
 });
 
-test('auto-translates a page when enabled', async () => {
-  const page = await contentPage({ settings: { autoTranslate: true } });
+test('does not translate a site that was never translated before', async () => {
+  const page = await contentPage();
+  try {
+    await wait(1200);
+    assert.equal(page.browser.sent.length, 0, 'no request is made without an explicit action');
+    assert.equal(
+      page.window.document.querySelectorAll('[data-pt-translation]').length,
+      0,
+      'the page stays in its original language'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('auto-translates a remembered site on load', async () => {
+  const page = await contentPage({ storage: { ptTranslatedOrigins: ['https://example.com'] } });
   try {
     await waitFor(
       () => page.content.getState().page.status === 'translated',
@@ -115,8 +141,8 @@ test('auto-translates a page when enabled', async () => {
   }
 });
 
-test('auto-translates after a same-site SPA navigation', async () => {
-  const page = await contentPage({ settings: { autoTranslate: true } });
+test('auto-translates after a same-site SPA navigation on a remembered site', async () => {
+  const page = await contentPage({ storage: { ptTranslatedOrigins: ['https://example.com'] } });
   try {
     await waitFor(
       () => page.content.getState().page.status === 'translated',
@@ -144,6 +170,273 @@ test('auto-translates after a same-site SPA navigation', async () => {
       () => page.content.getState().page.status === 'translated',
       3000,
       'new route translation completion'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('a manual translation remembers the site for later routes', async () => {
+  const page = await contentPage();
+  try {
+    await page.content.translatePage('replace');
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'manual page translation'
+    );
+    assert.deepEqual(
+      page.browser.storage.data.ptTranslatedOrigins,
+      ['https://example.com'],
+      'the origin is remembered'
+    );
+
+    page.window.history.pushState({}, '', '/article/next');
+    page.window.document.body.innerHTML =
+      '<main><p id="next">Next route in English</p></main>';
+
+    await waitFor(
+      () =>
+        page.browser.sent.some(
+          (message) => message.type === 'translateBatch' && message.texts.includes('Next route in English')
+        ),
+      6000,
+      'automatic translation of the next route'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+function batchTexts(page) {
+  return Array.from(
+    page.browser.sent
+      .filter((message) => message.type === 'translateBatch')
+      .flatMap((message) => message.texts)
+  );
+}
+
+test('SPA navigation keeps the translated shell and only sends new content', async () => {
+  const page = await contentPage({
+    html: `
+      <nav id="sidebar">
+        <p id="nav-home">Home in English</p>
+        <p id="nav-guide">Guide in English</p>
+      </nav>
+      <main id="main"><p id="intro">Introduction in English</p></main>
+    `,
+    storage: { ptTranslatedOrigins: ['https://example.com'] }
+  });
+  try {
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'initial automatic translation'
+    );
+
+    const sidebarSpan = page.window.document.querySelector('#nav-home > [data-pt-translation]');
+    assert.ok(sidebarSpan, 'the sidebar is translated');
+    assert.equal(batchTexts(page).includes('Home in English'), true);
+    const sentBefore = batchTexts(page).length;
+
+    page.window.history.pushState({}, '', '/guide/next');
+    page.window.document.getElementById('intro').remove();
+    const next = page.window.document.createElement('p');
+    next.id = 'next';
+    next.textContent = 'Second route in English';
+    page.window.document.getElementById('main').appendChild(next);
+
+    await waitFor(
+      () => batchTexts(page).includes('Second route in English'),
+      6000,
+      'translation of the new route'
+    );
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      3000,
+      'new route completion'
+    );
+
+    const sentAfter = batchTexts(page).slice(sentBefore);
+    assert.equal(
+      Array.from(sentAfter).join('|'),
+      'Second route in English',
+      'only the new route content is sent, never the persistent sidebar'
+    );
+    assert.equal(
+      page.window.document.querySelector('#nav-home > [data-pt-translation]'),
+      sidebarSpan,
+      'the existing sidebar translation node is kept as-is'
+    );
+    assert.equal(sidebarSpan.isConnected, true);
+    assert.equal(
+      batchTexts(page).filter((text) => text === 'Home in English').length,
+      1,
+      'the sidebar was translated exactly once'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('translating again only requests blocks added since the last run', async () => {
+  const page = await contentPage();
+  try {
+    await page.content.translatePage('bilingual');
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'first translation'
+    );
+
+    const firstSpan = page.window.document.querySelector('#first > [data-pt-translation]');
+    assert.ok(firstSpan);
+    const sentBefore = batchTexts(page).length;
+
+    const late = page.window.document.createElement('p');
+    late.id = 'late';
+    late.textContent = 'Late English paragraph';
+    page.window.document.querySelector('main').appendChild(late);
+
+    await page.content.translatePage('bilingual');
+    await waitFor(
+      () => batchTexts(page).includes('Late English paragraph'),
+      6000,
+      'translation of the new block'
+    );
+
+    const lateSpans = page.window.document.querySelectorAll('#late > [data-pt-translation]');
+    assert.equal(lateSpans.length, 1);
+    assert.equal(page.window.document.querySelector('#first > [data-pt-translation]'), firstSpan);
+    assert.equal(firstSpan.isConnected, true);
+    assert.equal(
+      Array.from(batchTexts(page).slice(sentBefore)).join('|'),
+      'Late English paragraph',
+      'already translated text is not requested again'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('a block re-rendered in place replaces its stale translation', async () => {
+  const page = await contentPage();
+  try {
+    await page.content.translatePage('bilingual');
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'first translation'
+    );
+
+    page.window.document.getElementById('first').textContent = 'Updated English paragraph';
+    await page.content.translatePage('bilingual');
+    await waitFor(
+      () => batchTexts(page).includes('Updated English paragraph'),
+      6000,
+      'translation of the changed block'
+    );
+
+    const spans = page.window.document.querySelectorAll('#first > [data-pt-translation]');
+    assert.equal(spans.length, 1, 'the stale translation is replaced, not duplicated');
+    assert.equal(spans[0].textContent, '[译]Updated English paragraph');
+  } finally {
+    page.window.close();
+  }
+});
+
+test('SPA navigation in replace mode keeps translated text nodes', async () => {
+  const page = await contentPage({
+    html: `
+      <header><p id="logo">Site logo in English</p></header>
+      <main id="main"><p id="intro">Introduction in English</p></main>
+    `,
+    storage: { ptTranslatedOrigins: ['https://example.com'] },
+    settings: { pageMode: 'replace' }
+  });
+  try {
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'initial replace-mode translation'
+    );
+
+    const logo = page.window.document.getElementById('logo');
+    const logoNode = logo.firstChild;
+    const translatedLogo = logoNode.nodeValue;
+    assert.notEqual(translatedLogo, 'Site logo in English');
+
+    page.window.history.pushState({}, '', '/guide/next');
+    page.window.document.getElementById('main').innerHTML = '<p id="next">Second route in English</p>';
+
+    await waitFor(
+      () => batchTexts(page).includes('Second route in English'),
+      6000,
+      'translation of the new route'
+    );
+
+    assert.equal(page.window.document.getElementById('logo').firstChild, logoNode, 'the logo node is kept');
+    assert.equal(logoNode.nodeValue, translatedLogo, 'the logo keeps its translation');
+    assert.equal(
+      batchTexts(page).filter((text) => text === 'Site logo in English').length,
+      1,
+      'the persistent header is not requested again'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('switching the page mode restores and translates from the original text', async () => {
+  const page = await contentPage();
+  try {
+    await page.content.translatePage('bilingual');
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'bilingual translation'
+    );
+    assert.ok(page.window.document.querySelector('#first > [data-pt-translation]'));
+
+    await page.content.translatePage('replace');
+    await waitFor(
+      () => page.window.document.querySelectorAll('[data-pt-translation]').length === 0,
+      6000,
+      'bilingual spans removed'
+    );
+    const first = page.window.document.getElementById('first');
+    await waitFor(
+      () => first.textContent === '[译]Hello world',
+      6000,
+      'replace-mode completion'
+    );
+
+    assert.equal(
+      Array.from(first.childNodes).every((node) => node.nodeType === 3),
+      true,
+      'no stale bilingual span is left behind'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+
+test('restoring the original text forgets the site', async () => {
+  const page = await contentPage();
+  try {
+    await page.content.translatePage('replace');
+    await waitFor(
+      () => (page.browser.storage.data.ptTranslatedOrigins || []).length === 1,
+      6000,
+      'origin remembered'
+    );
+
+    page.content.restorePage();
+    await waitFor(
+      () => (page.browser.storage.data.ptTranslatedOrigins || []).length === 0,
+      2000,
+      'origin forgotten'
     );
   } finally {
     page.window.close();
@@ -183,6 +476,37 @@ test('selecting text shows the floating button and a click translates it', async
   assert.equal(role(page, 'selection').style.display, 'none', 'button hides after clicking');
 });
 
+test('the result panel follows the selected text while the page scrolls', async () => {
+  const page = await contentPage();
+  const paragraph = page.window.document.getElementById('first');
+  selectNodeText(page.window, paragraph);
+  mouseUp(page);
+  await waitFor(() => role(page, 'selection').style.display === 'flex', 500, 'button visible');
+
+  role(page, 'selection').click();
+  await waitFor(() => role(page, 'result').textContent === '你好，世界', 1000, 'translation shown');
+
+  const panel = role(page, 'panel');
+  const baseTop = parseInt(panel.style.top, 10);
+  const baseLeft = parseInt(panel.style.left, 10);
+
+  // A 120px scroll moves the selected range up by the same amount.
+  const proto = page.window.Range.prototype;
+  proto.getBoundingClientRect = () => ({
+    left: 120, top: 20, right: 420, bottom: 50, width: 300, height: 30, x: 120, y: 20
+  });
+  page.window.dispatchEvent(new page.window.Event('scroll'));
+  await waitFor(() => parseInt(panel.style.top, 10) === baseTop - 120, 500, 'panel follows the text');
+  assert.equal(parseInt(panel.style.left, 10), baseLeft);
+
+  // Scrolling back returns the panel to its original spot.
+  proto.getBoundingClientRect = () => ({
+    left: 120, top: 140, right: 420, bottom: 170, width: 300, height: 30, x: 120, y: 140
+  });
+  page.window.dispatchEvent(new page.window.Event('scroll'));
+  await waitFor(() => parseInt(panel.style.top, 10) === baseTop, 500, 'panel returns with the text');
+});
+
 test('a selection longer than 5000 characters does not offer a button', async () => {
   const page = await contentPage();
   const paragraph = page.window.document.getElementById('first');
@@ -210,7 +534,7 @@ test('turning the selection button off in storage hides it live', async () => {
   await waitFor(() => role(page, 'selection').style.display === 'flex', 500, 'button visible');
 
   await page.browser.storage.local.set({
-    settings: { provider: 'mymemory', targetLang: 'zh-CN', autoTranslate: false, selectionButton: false }
+    settings: { provider: 'mymemory', targetLang: 'zh-CN', selectionButton: false }
   });
   await wait(30);
   assert.equal(role(page, 'selection').style.display, 'none');
@@ -335,7 +659,16 @@ test('bilingual page translation appends translations and skips code/script/hidd
 
 test('page translation sends visible blocks first and catches up offscreen blocks', async () => {
   const html = '<article><p id="top">Visible English paragraph</p><p id="below">Offscreen English paragraph</p></article>';
-  const page = await contentPage({ html });
+  const page = await contentPage({
+    html,
+    // Keep the first batch in flight long enough to observe the progress note.
+    respond(message) {
+      if (message.type !== 'translateBatch') return defaultRespond(message);
+      return new Promise((resolve) => {
+        setTimeout(() => resolve(defaultRespond(message)), 120);
+      });
+    }
+  });
 
   const rect = (top) => ({
     left: 0, top, right: 300, bottom: top + 40, width: 300, height: 40, x: 0, y: top
@@ -588,7 +921,7 @@ test('the provider label follows settings changes', async () => {
   assert.equal(role(page, 'provider').textContent, 'MyMemory');
 
   await page.browser.storage.local.set({
-    settings: { provider: 'tencent', targetLang: 'ja', autoTranslate: false, selectionButton: true }
+    settings: { provider: 'tencent', targetLang: 'ja', selectionButton: true }
   });
   await wait(30);
 
@@ -598,6 +931,30 @@ test('the provider label follows settings changes', async () => {
   assert.equal(role(page, 'provider').textContent, 'Tencent Cloud');
   await pending;
   assert.equal(page.content.getState().settings.provider, 'tencent');
+});
+
+test('an explicit translation re-reads settings when the change event is missed', async () => {
+  const page = await contentPage();
+
+  // Safari can drop storage.onChanged in tabs that were already open. Mutate
+  // the stored value without notifying listeners to reproduce that.
+  page.browser.storage.data.settings = Object.assign({}, page.browser.storage.data.settings, {
+    provider: 'google',
+    targetLang: 'ja'
+  });
+
+  await page.content.translatePage('replace');
+  await waitFor(
+    () => page.content.getState().page.status === 'translated' && !page.content.getState().page.running,
+    3000,
+    'page translated'
+  );
+
+  assert.equal(role(page, 'provider').textContent, 'Google 翻译');
+  assert.equal(page.content.getState().settings.provider, 'google');
+  const batch = page.browser.sent.find((message) => message.type === 'translateBatch');
+  assert.ok(batch, 'a batch request was sent');
+  assert.equal(batch.to, 'ja', 'the new target language is used');
 });
 
 test('the panel target language can be changed', async () => {

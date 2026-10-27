@@ -102,9 +102,8 @@ test('the popup renders the current provider, language and version', async () =>
   assert.equal($(page, 'provider-badge').getAttribute('data-tone'), 'key');
   assert.equal($(page, 'target').value, 'ja');
   assert.ok($(page, 'target').options.length >= 30);
-  assert.equal($(page, 'auto-translate').checked, true, 'automatic translation defaults on');
   assert.equal($(page, 'selection-toggle').checked, false);
-  assert.equal($(page, 'version').textContent, 'v1.1.0');
+  assert.equal($(page, 'version').textContent, 'v1.1.9');
 });
 
 test('the popup uses the saved page mode for the primary action', async () => {
@@ -233,18 +232,6 @@ test('the floating-button toggle persists its state', async () => {
   await waitFor(() => page.browser.storage.data.settings.selectionButton === false, 1000, 'toggle saved');
 });
 
-test('the automatic-translation toggle persists its state', async () => {
-  const page = popup();
-  await waitFor(() => $(page, 'target').options.length >= 30, 1000, 'popup init');
-
-  const toggle = $(page, 'auto-translate');
-  assert.equal(toggle.checked, true);
-  toggle.checked = false;
-  toggle.dispatchEvent(new page.window.Event('change', { bubbles: true }));
-
-  await waitFor(() => page.browser.storage.data.settings.autoTranslate === false, 1000, 'auto saved');
-});
-
 /* ------------------------------------------------------------------ *
  * Options
  * ------------------------------------------------------------------ */
@@ -279,8 +266,15 @@ test('the options page lists every provider with the current one selected', asyn
       'Tencent Cloud', 'DeepL', 'LibreTranslate', 'OpenAI Compatible'
     ]
   );
-  assert.equal($(page, 'version').textContent, '1.1.0 · macOS Safari');
+  assert.equal($(page, 'version').textContent, '1.1.9 · macOS Safari');
   assert.match($(page, 'fields').textContent, /无需填写密钥/);
+
+  const repo = page.document.querySelector('.repo-link');
+  assert.equal(repo.getAttribute('href'), 'https://github.com/xlab6/safari-translator');
+  assert.equal(repo.getAttribute('target'), '_blank');
+  assert.equal(repo.textContent, 'github.com/xlab6/safari-translator');
+  assert.equal(page.document.querySelector('.security'), null, 'privacy section removed');
+  assert.doesNotMatch(page.document.body.textContent, /隐私与安全/);
 });
 
 test('switching provider re-renders its credential fields and saves at once', async () => {
@@ -303,6 +297,21 @@ test('switching provider re-renders its credential fields and saves at once', as
   assert.ok($(page, 'field-tencentSecretKey'));
   assert.ok($(page, 'field-tencentRegion'));
   assert.equal($(page, 'field-tencentSecretKey').type, 'password');
+});
+
+test('a dropped settings write is reported instead of showing 已保存', async () => {
+  const page = options();
+  await waitFor(() => providerIds(page).length > 0, 1000, 'providers rendered');
+
+  // Safari has returned resolved writes that never reached storage.
+  page.browser.storage.local.set = (items, callback) => {
+    setTimeout(() => callback && callback(), 0);
+    return Promise.resolve();
+  };
+
+  card(page, 'google').click();
+  await waitFor(() => $(page, 'save-state').textContent === '保存失败', 2000, 'failure reported');
+  assert.equal(page.browser.storage.data.settings.provider, 'mymemory');
 });
 
 test('credential edits are auto-saved after a short delay', async () => {
@@ -442,12 +451,6 @@ test('page mode, theme and language controls persist', async () => {
   source.dispatchEvent(new page.window.Event('change', { bubbles: true }));
   await waitFor(() => page.browser.storage.data.settings.sourceLang === 'ja', 1000, 'source saved');
 
-  const auto = $(page, 'auto-translate');
-  assert.equal(auto.checked, true);
-  auto.checked = false;
-  auto.dispatchEvent(new page.window.Event('change', { bubbles: true }));
-  await waitFor(() => page.browser.storage.data.settings.autoTranslate === false, 1000, 'auto saved');
-
   const selection = $(page, 'selection-button');
   selection.checked = false;
   selection.dispatchEvent(new page.window.Event('change', { bubbles: true }));
@@ -474,8 +477,36 @@ test('reset restores the default settings', async () => {
   const saved = page.browser.storage.data.settings;
   assert.equal(saved.targetLang, 'zh-CN');
   assert.equal(saved.pageMode, 'replace');
-  assert.equal(saved.autoTranslate, true);
   assert.equal(saved.tencentSecretId, '');
   await waitFor(() => card(page, 'mymemory').getAttribute('aria-checked') === 'true', 1000, 'defaults rendered');
   assert.equal($(page, 'save-state').textContent, '已恢复默认');
+});
+
+test('the chosen provider is still selected after reopening the page', async () => {
+  const page = options();
+  await waitFor(() => providerIds(page).length > 0, 1000, 'providers rendered');
+
+  card(page, 'deepl').click();
+  await waitFor(() => page.browser.storage.data.settings.provider === 'deepl', 1500, 'provider saved');
+  assert.equal($(page, 'save-state').textContent, '已保存');
+
+  const reopened = options({ browser: page.browser });
+  await waitFor(() => providerIds(reopened).length > 0, 1000, 'reopened providers');
+  assert.equal(card(reopened, 'deepl').getAttribute('aria-checked'), 'true');
+  assert.equal(card(reopened, 'mymemory').getAttribute('aria-checked'), 'false');
+});
+
+test('a reused options page re-reads the stored settings when shown again', async () => {
+  const page = options();
+  await waitFor(() => providerIds(page).length > 0, 1000, 'providers rendered');
+  assert.equal(card(page, 'mymemory').getAttribute('aria-checked'), 'true');
+
+  // Simulate another tab changing the provider while this page is hidden.
+  await page.browser.storage.local.set({
+    settings: Object.assign({}, page.browser.storage.data.settings, { provider: 'azure', azureKey: 'k' })
+  });
+  page.window.dispatchEvent(new page.window.Event('pageshow'));
+
+  await waitFor(() => card(page, 'azure').getAttribute('aria-checked') === 'true', 1000, 'page resynced');
+  assert.ok($(page, 'field-azureKey'), 'the config for the stored provider is rendered');
 });

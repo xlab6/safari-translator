@@ -215,7 +215,7 @@ test('ping and unknown requests answer through sendResponse', async () => {
   const { fixture } = setup();
   const ping = await dispatch(fixture, { __pt: true, type: 'pt:ping' });
   assert.equal(ping.response.ok, true);
-  assert.equal(ping.response.version, '1.1.0');
+  assert.equal(ping.response.version, '1.1.9');
 
   const unknown = await dispatch(fixture, { __pt: true, type: 'pt:whatever' });
   assert.equal(unknown.response.ok, false);
@@ -302,6 +302,34 @@ test('batch translation keeps per-item failures and caps the batch size', async 
     settings: { provider: 'mymemory', targetLang: 'zh-CN' }
   });
   assert.equal(capped.response.results.length, 200);
+});
+
+test('batch messages go through the joining translator', async () => {
+  const { fixture, context } = setup();
+  const calls = [];
+  context.PT.translateMany = async (settings, texts, options) => {
+    calls.push({ texts: Array.from(texts), options });
+    return Array.from(texts, (text) => ({
+      ok: true,
+      text: '译:' + text,
+      detected: 'en',
+      provider: settings.provider
+    }));
+  };
+
+  const answer = await dispatch(fixture, {
+    __pt: true,
+    type: 'translateBatch',
+    texts: ['one', 'two'],
+    settings: { provider: 'google', targetLang: 'zh-CN' },
+    to: 'zh-CN'
+  });
+
+  assert.equal(answer.response.ok, true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].texts, ['one', 'two']);
+  assert.equal(calls[0].options.to, 'zh-CN');
+  assert.equal(answer.response.results[1].text, '译:two');
 });
 
 test('test-provider bypasses the cache and reports the provider', async () => {
