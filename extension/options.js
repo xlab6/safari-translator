@@ -478,6 +478,7 @@
   }
 
   function renderToggles() {
+    $('auto-translate').checked = settings.autoTranslate !== false;
     $('selection-button').checked = settings.selectionButton !== false;
     $('theme').value = settings.theme || 'auto';
   }
@@ -546,6 +547,11 @@
         renderModes();
         saveNow();
       });
+    });
+
+    $('auto-translate').addEventListener('change', function (event) {
+      settings.autoTranslate = event.target.checked;
+      saveNow();
     });
 
     $('selection-button').addEventListener('change', function (event) {

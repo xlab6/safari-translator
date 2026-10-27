@@ -1,9 +1,10 @@
 # Safari Translator — Selection & Page Translation
 
-A native Safari Web Extension (Manifest V2) that translates **only when you ask it to**.
+A native Safari Web Extension (Manifest V2) that translates whole pages automatically by default, while keeping selection translation and manual controls available.
 
 > This is an independent project, not affiliated with Apple Inc. “Safari” is a trademark of Apple Inc., used here only to identify the host browser.
 
+- Open a web page or navigate within the same site → the page is translated automatically (including SPA route changes; can be turned off in settings)
 - Select text → a floating **翻译** (Translate) button appears next to the selection
 - Right-click → translate the selection, translate the whole page using the saved mode, or restore the original
 - Whole-page translation handles the visible viewport first and fills in offscreen content in the background
@@ -34,11 +35,20 @@ A native Safari Web Extension (Manifest V2) that translates **only when you ask 
 
 ## Features
 
+### Automatic page translation
+
+- **On by default**: after a web page is ready, it is translated using the saved default mode
+- Same-site navigation is translated automatically, including `pushState` / `replaceState` single-page application route changes
+- Hash-only changes do not trigger another run; old translations are restored before the new route content is processed
+- Automatic translation also translates the visible viewport first and fills in offscreen content asynchronously
+- Success is quiet; fatal setup problems show an error and link to Settings
+- Turn it off from the toolbar popup or Settings; selection and context-menu actions still work
+
 ### Selection translation
 
 Select text on a page and a small button appears beside the selection. Click it to translate; the result opens in a floating panel.
 
-- No request is sent on page load, scroll, or selection alone — only after you click the button or a context-menu item
+- The floating button is shown only after a mouse or keyboard selection; whole-page automatic translation is triggered separately by the page-translation logic
 - The panel shows the original text, detected language, provider, and translation
 - Speak, copy, change the target language, retry, or open settings from the panel
 - Selections longer than 5,000 characters do not show the floating button
@@ -61,7 +71,7 @@ The menu appears on web content only, not on Safari internal pages or extension 
 
 - **Bilingual mode** inserts a translated block under each paragraph, with a subtle left rule
 - **Replace mode** swaps text nodes in place and can be restored
-- Replace mode is the default; switch to bilingual mode in Settings. Both the context menu and the toolbar popup follow this setting.
+- Replace mode is the default; switch to bilingual mode in Settings. Automatic translation, the context menu, and the toolbar popup follow this setting.
 - Skips `script`, `style`, `code`, `pre`, `textarea`, editable regions, hidden elements, and already translated nodes
 - Translates the visible viewport first, then fills in offscreen content in the background (~450 ms later); nearby blocks are promoted as you scroll
 - Batches 8 units / 2,600 characters, with up to 3 concurrent requests; shows progress and a Cancel button
@@ -73,6 +83,7 @@ The menu appears on web content only, not on Safari internal pages or extension 
 Click the extension icon in Safari's toolbar to:
 
 - See the current provider, target language, and status
+- Toggle **Automatic page translation**
 - Translate the page using the saved mode (replace by default), switch to the other mode, or restore it
 - Toggle the selection button
 - Change the target language (saved immediately)
@@ -87,7 +98,7 @@ Changes are saved automatically (450 ms debounce) and pushed to open tabs:
 - **Providers**: eight cards marked keyless / key required / self-hosted
 - **Provider configuration**: fields for the selected provider and a **Test translation** button
 - **Languages**: source (auto-detect by default) and target
-- **Page translation**: default mode (replace / bilingual), selection button, theme (auto / light / dark)
+- **Page translation**: automatic translation switch, default mode (replace / bilingual), selection button, theme (auto / light / dark)
 - **Privacy and security**: explains how keys are stored
 - **Other**: reset to defaults and version information
 
@@ -198,6 +209,12 @@ Regeneration **overwrites** the welcome page, `ViewController.swift`, bundle ide
 
 ## Usage
 
+### Automatic translation
+
+By default, opening a page translates it using the saved default mode. Same-site navigation in the same tab, including single-page application route changes, is translated automatically as well.
+
+To turn it off, open the toolbar popup or Settings and disable **Automatic page translation**. After it is off, page translation still works from selection translation, the context menu, and the toolbar popup.
+
 ### Translate a selection
 
 1. Select text with the mouse or keyboard.
@@ -208,7 +225,8 @@ You can also select text and choose **翻译所选文字** from the context menu
 
 ### Translate a page
 
-- Right-click → **翻译此页面** to translate the page using the saved default mode.
+- With automatic translation enabled, opening a page or navigating within the same site translates it using the saved default mode.
+- Right-click → **翻译此页面** to translate the page manually using the saved default mode.
 - Right-click → **还原原文** to restore the page.
 
 To use the other mode, click the alternate button in the toolbar popup or change the default in Settings. Both modes can be restored at any time.
@@ -401,7 +419,7 @@ The extension loads no remote scripts, uses no `eval`, and injects no third-part
 | `contextMenus` | Create the right-click menu |
 | `*://*/*` | Inject the selection button, read selections, translate pages; also lets the background page call provider APIs without CORS issues |
 
-The extension does **not** request `tabs`. It uses the host permission to locate the active tab, inject content scripts, and send messages, and only reads page content after a user action. Safari still shows a per-site access prompt.
+The extension does **not** request `tabs`. It uses the host permission to locate the active tab, inject content scripts, and send messages. With automatic translation enabled, it reads page text after the page loads. Safari still shows a per-site access prompt.
 
 To limit access, change **Safari → Settings → Extensions → Safari Translator → Website access** to **Allow on specific websites**.
 
@@ -410,13 +428,13 @@ To limit access, change **Safari → Settings → Extensions → Safari Translat
 ## How it works
 
 ```
-User action (floating button / context menu / popup)
+Automatic translation / floating button / context menu / popup
         │
         ▼
 content.js (page context)
   ├─ read selection or walk page text
   ├─ split, deduplicate, cache
-  └─ browser.runtime.sendMessage({ __pt: true, type: 'pt:translate', ... })
+  └─ browser.runtime.sendMessage({ __pt: true, type: 'pt:translate' | 'translateBatch', ... })
         │
         ▼
 background.js (the only network caller)
@@ -431,7 +449,7 @@ content.js renders translation / error / progress
 Design notes:
 
 - **Background requests**: `host_permissions` covers all sites, so the background page can call provider APIs without page CORS restrictions; content scripts never see keys
-- **Explicit only**: no `MutationObserver` auto-translation and no translate-on-load; every request starts from a click
+- **Automatic by default, optional off**: page loads and same-site SPA route changes translate the page automatically; when the setting is off, page requests start only from selection, context menu, or popup actions
 - **`__pt` message marker**: the background ignores messages without it, avoiding collisions with page `postMessage` traffic or other extensions
 - **Provider adapters**: `providers.js` centralizes signing, language mapping, chunking, timeouts (20 s; 45 s for OpenAI), and error normalization
 - **Graceful failure**: missing configuration returns a `config` error and points to settings instead of failing silently
@@ -457,7 +475,7 @@ Only `jsdom` (for tests) is installed. The extension has no runtime dependencies
 ### Commands
 
 ```bash
-npm test          # node --test tests/, 88 tests
+npm test          # node --test tests/, 99 tests
 npm run lint      # validate manifest, icons, script references
 npm run check:js  # node --check on every extension script
 npm run check     # lint + syntax check + tests
@@ -491,7 +509,7 @@ The tests use `node:test` + jsdom and never hit the network:
 - `tests/common.test.mjs`: language mapping, settings validation, text splitting, error serialization
 - `tests/providers.test.mjs`: request construction, signing, splitting, error mapping for all eight providers
 - `tests/background.test.mjs`: menus, message routing, concurrency
-- `tests/content.test.mjs`: selection, bilingual/replace/restore, progress, errors
+- `tests/content.test.mjs`: automatic page translation, SPA routing, selection, bilingual/replace/restore, progress, errors
 - `tests/ui.test.mjs`: popup and options rendering, saving, reset, test translation
 
 jsdom is resolved from `PT_JSDOM` or a sibling project's `node_modules/jsdom`.
@@ -500,10 +518,8 @@ jsdom is resolved from `PT_JSDOM` or a sibling project's `node_modules/jsdom`.
 
 ## Known limitations
 
-- **No automatic translation** — by design
 - No iframe support (`all_frames: false`); Safari Reader, PDFs, extension pages, and browser internal pages are out of scope
-- Infinite-scroll pages only translate content that exists when you trigger translation; new content requires another run
-- SPA route changes do not clean up inserted translations; reload or use **还原原文**
+- Automatic translation starts on page load and same-site SPA route changes; infinite-scroll content added afterward still requires another manual run
 - Whole-page translation is capped at 400 blocks / 700 text nodes; long pages may be partially translated
 - Bilingual mode inserts `<span data-pt-translation>` elements, which can affect rare layouts that depend on `:last-child` or fixed heights
 - Translations are inserted as plain text; inline formatting from the original (bold, links, etc.) is not preserved in translated blocks

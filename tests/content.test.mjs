@@ -44,6 +44,9 @@ async function contentPage(options = {}) {
         sourceLang: 'auto',
         targetLang: 'zh-CN',
         pageMode: 'bilingual',
+        // Most tests exercise explicit actions. Automatic translation has its
+        // own tests below and is disabled here to keep request counts stable.
+        autoTranslate: false,
         selectionButton: true,
         theme: 'auto'
       },
@@ -86,6 +89,65 @@ test('the content script boots without translating anything', async () => {
   assert.equal(role(page, 'panel').classList.contains('pt-open'), false);
   assert.equal(role(page, 'progress').hidden, true);
   assert.equal(page.browser.sent.length, 0, 'no request is made on load');
+});
+
+test('auto-translates a page when enabled', async () => {
+  const page = await contentPage({ settings: { autoTranslate: true } });
+  try {
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'automatic page translation'
+    );
+
+    assert.ok(
+      page.browser.sent.some(
+        (message) => message.type === 'translateBatch' && message.texts.includes('Hello world')
+      ),
+      'the page text is sent automatically'
+    );
+    assert.ok(
+      page.window.document.querySelectorAll('[data-pt-translation]').length > 0,
+      'translations are inserted without an explicit action'
+    );
+  } finally {
+    page.window.close();
+  }
+});
+
+test('auto-translates after a same-site SPA navigation', async () => {
+  const page = await contentPage({ settings: { autoTranslate: true } });
+  try {
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      6000,
+      'initial automatic translation'
+    );
+    const before = page.browser.sent.filter((message) => message.type === 'translateBatch').length;
+
+    page.window.history.pushState({}, '', '/article/second');
+    page.window.document.body.innerHTML =
+      '<main><p id="second">Second page in English</p></main>';
+
+    await waitFor(
+      () => page.browser.sent.filter((message) => message.type === 'translateBatch').length > before,
+      6000,
+      'translation after SPA navigation'
+    );
+
+    const batches = page.browser.sent.filter((message) => message.type === 'translateBatch');
+    assert.ok(
+      batches[batches.length - 1].texts.includes('Second page in English'),
+      'the new route content is translated'
+    );
+    await waitFor(
+      () => page.content.getState().page.status === 'translated',
+      3000,
+      'new route translation completion'
+    );
+  } finally {
+    page.window.close();
+  }
 });
 
 test('selecting text shows the floating button and a click translates it', async () => {
@@ -148,7 +210,7 @@ test('turning the selection button off in storage hides it live', async () => {
   await waitFor(() => role(page, 'selection').style.display === 'flex', 500, 'button visible');
 
   await page.browser.storage.local.set({
-    settings: { provider: 'mymemory', targetLang: 'zh-CN', selectionButton: false }
+    settings: { provider: 'mymemory', targetLang: 'zh-CN', autoTranslate: false, selectionButton: false }
   });
   await wait(30);
   assert.equal(role(page, 'selection').style.display, 'none');
@@ -526,7 +588,7 @@ test('the provider label follows settings changes', async () => {
   assert.equal(role(page, 'provider').textContent, 'MyMemory');
 
   await page.browser.storage.local.set({
-    settings: { provider: 'tencent', targetLang: 'ja', selectionButton: true }
+    settings: { provider: 'tencent', targetLang: 'ja', autoTranslate: false, selectionButton: true }
   });
   await wait(30);
 

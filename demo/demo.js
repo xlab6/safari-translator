@@ -146,7 +146,7 @@
       });
     }
 
-    if (message.type === 'pt:ping') return { ok: true, version: '1.0.5', demo: true };
+    if (message.type === 'pt:ping') return { ok: true, version: '1.1.0', demo: true };
 
     return { ok: false, error: { code: 'request', message: '演示模式不支持：' + message.type } };
   }
@@ -296,7 +296,7 @@
           window.getSelection().removeAllRanges();
           api.closePanel();
           document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-          setStatus('已关闭译文卡片。扩展不会自动翻译任何内容。');
+          setStatus('已关闭译文卡片。自动整页翻译可在扩展弹窗或设置中关闭。');
           break;
 
         default:

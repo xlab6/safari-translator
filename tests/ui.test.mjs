@@ -102,8 +102,9 @@ test('the popup renders the current provider, language and version', async () =>
   assert.equal($(page, 'provider-badge').getAttribute('data-tone'), 'key');
   assert.equal($(page, 'target').value, 'ja');
   assert.ok($(page, 'target').options.length >= 30);
+  assert.equal($(page, 'auto-translate').checked, true, 'automatic translation defaults on');
   assert.equal($(page, 'selection-toggle').checked, false);
-  assert.equal($(page, 'version').textContent, 'v1.0.5');
+  assert.equal($(page, 'version').textContent, 'v1.1.0');
 });
 
 test('the popup uses the saved page mode for the primary action', async () => {
@@ -232,6 +233,18 @@ test('the floating-button toggle persists its state', async () => {
   await waitFor(() => page.browser.storage.data.settings.selectionButton === false, 1000, 'toggle saved');
 });
 
+test('the automatic-translation toggle persists its state', async () => {
+  const page = popup();
+  await waitFor(() => $(page, 'target').options.length >= 30, 1000, 'popup init');
+
+  const toggle = $(page, 'auto-translate');
+  assert.equal(toggle.checked, true);
+  toggle.checked = false;
+  toggle.dispatchEvent(new page.window.Event('change', { bubbles: true }));
+
+  await waitFor(() => page.browser.storage.data.settings.autoTranslate === false, 1000, 'auto saved');
+});
+
 /* ------------------------------------------------------------------ *
  * Options
  * ------------------------------------------------------------------ */
@@ -266,7 +279,7 @@ test('the options page lists every provider with the current one selected', asyn
       'Tencent Cloud', 'DeepL', 'LibreTranslate', 'OpenAI Compatible'
     ]
   );
-  assert.equal($(page, 'version').textContent, '1.0.5 · macOS Safari');
+  assert.equal($(page, 'version').textContent, '1.1.0 · macOS Safari');
   assert.match($(page, 'fields').textContent, /无需填写密钥/);
 });
 
@@ -429,6 +442,12 @@ test('page mode, theme and language controls persist', async () => {
   source.dispatchEvent(new page.window.Event('change', { bubbles: true }));
   await waitFor(() => page.browser.storage.data.settings.sourceLang === 'ja', 1000, 'source saved');
 
+  const auto = $(page, 'auto-translate');
+  assert.equal(auto.checked, true);
+  auto.checked = false;
+  auto.dispatchEvent(new page.window.Event('change', { bubbles: true }));
+  await waitFor(() => page.browser.storage.data.settings.autoTranslate === false, 1000, 'auto saved');
+
   const selection = $(page, 'selection-button');
   selection.checked = false;
   selection.dispatchEvent(new page.window.Event('change', { bubbles: true }));
@@ -455,6 +474,7 @@ test('reset restores the default settings', async () => {
   const saved = page.browser.storage.data.settings;
   assert.equal(saved.targetLang, 'zh-CN');
   assert.equal(saved.pageMode, 'replace');
+  assert.equal(saved.autoTranslate, true);
   assert.equal(saved.tencentSecretId, '');
   await waitFor(() => card(page, 'mymemory').getAttribute('aria-checked') === 'true', 1000, 'defaults rendered');
   assert.equal($(page, 'save-state').textContent, '已恢复默认');

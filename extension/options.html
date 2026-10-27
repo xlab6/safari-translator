@@ -61,7 +61,7 @@
       <section class="card">
         <div class="card-head">
           <h2>页面翻译</h2>
-          <p>工具栏弹窗和右键菜单「翻译此页面」都使用这里的默认方式。</p>
+          <p>自动翻译、工具栏弹窗和右键菜单「翻译此页面」都使用这里的默认方式。</p>
         </div>
         <div class="modes" id="modes">
           <button class="mode" type="button" data-mode="replace">
@@ -74,6 +74,14 @@
           </button>
         </div>
         <div class="rows">
+          <label class="row" for="auto-translate">
+            <span class="row-text">
+              <strong>自动翻译网页</strong>
+              <small>打开网页及站内跳转时自动翻译整页，默认开启</small>
+            </span>
+            <input type="checkbox" id="auto-translate">
+            <i aria-hidden="true"></i>
+          </label>
           <label class="row" for="selection-button">
             <span class="row-text">
               <strong>划词翻译按钮</strong>

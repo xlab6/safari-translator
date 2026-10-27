@@ -1,8 +1,8 @@
 {
   "name": "safari-translator",
-  "version": "1.0.5",
+  "version": "1.1.0",
   "private": true,
-  "description": "A Safari web extension that translates selected text or whole pages on demand, with configurable providers.",
+  "description": "A Safari web extension that auto-translates whole pages and selected text by default, with configurable providers.",
   "scripts": {
     "test": "node --test tests/",
     "lint": "node scripts/lint-manifest.js",

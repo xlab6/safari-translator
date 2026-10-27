@@ -2,9 +2,11 @@
  * Safari Translator — content script.
  *
  * UX contract:
- *   - Nothing is translated automatically.
+ *   - Whole pages are translated automatically when `autoTranslate` is on
+ *     (the default). It can be switched off in the popup or settings.
+ *   - Same-site full navigations and SPA route changes are translated too.
  *   - Selecting text shows a small floating "翻译" button.
- *   - Right-click offers explicit translate actions (see background.js).
+ *   - Right-click still offers explicit translate/restore actions.
  *   - Page translation inserts a bilingual copy (or replaces text) and can be
  *     reverted at any time.
  */
@@ -26,6 +28,11 @@
   var BATCH_CHARS = 2600;
   var VIEWPORT_MARGIN = 240;
   var BACKGROUND_DELAY = 450;
+  var AUTO_START_DELAY = 600;
+  var AUTO_ROUTE_DEBOUNCE = 700;
+  var AUTO_ROUTE_SETTLE = 450;
+  var AUTO_ROUTE_MAX_WAIT = 3000;
+  var AUTO_URL_POLL = 700;
   var FATAL_CODES = { auth: 1, config: 1, quota: 1, lang: 1 };
 
   var SKIP_SELECTOR = [
@@ -55,6 +62,15 @@
     lastRect: null,
     requestSeq: 0,
     toastTimer: null,
+    auto: {
+      timer: null,
+      routeTimer: null,
+      pollTimer: null,
+      lastKey: null,
+      initialized: false,
+      listening: false,
+      routeSeq: 0
+    },
     page: {
       status: 'idle', // idle | running | translated
       running: false,
@@ -1358,10 +1374,179 @@
     }, delay || 1200);
   }
 
-  async function startPageTranslation(mode) {
+  /* ------------------------------------------------------------------ *
+   * Automatic page translation
+   * ------------------------------------------------------------------ */
+
+  function autoTranslateEnabled() {
+    return !!(state.settings && state.settings.autoTranslate);
+  }
+
+  function isAutoEligible() {
+    if (!autoTranslateEnabled()) return false;
+    if (window.top !== window) return false;
+    var protocol = location.protocol;
+    if (protocol !== 'http:' && protocol !== 'https:' && protocol !== 'file:') return false;
+    return !!document.body;
+  }
+
+  function navigationKey() {
+    return String(location.href).split('#')[0];
+  }
+
+  function whenDocumentReady(callback) {
+    var called = false;
+    function run() {
+      if (called) return;
+      called = true;
+      callback();
+    }
+
+    if (document.readyState === 'complete') {
+      setTimeout(run, 0);
+      return;
+    }
+
+    window.addEventListener('load', run, { once: true });
+
+    // A slow advert or a stalled request should not block translation forever.
+    function fallback() {
+      setTimeout(run, 3000);
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fallback, { once: true });
+    } else {
+      fallback();
+    }
+  }
+
+  function scheduleAutoStart(delay) {
+    if (!autoTranslateEnabled()) return;
+    if (state.auto.timer) clearTimeout(state.auto.timer);
+    state.auto.timer = setTimeout(function () {
+      state.auto.timer = null;
+      autoTranslateNow();
+    }, typeof delay === 'number' ? delay : AUTO_START_DELAY);
+  }
+
+  function autoTranslateNow() {
+    if (!isAutoEligible()) return;
+    if (state.page.running || state.page.status === 'translated') return;
+    if (state.page.added.length || state.page.originals.size) {
+      restorePage({ silent: true });
+    }
+
+    var text = document.body ? document.body.textContent : '';
+    if (!text || !text.trim()) return;
+    startPageTranslation(state.settings.pageMode, { auto: true });
+  }
+
+  function abortPageForNavigation() {
+    var page = state.page;
+    if (!page.running) return;
+    page.cancelled = true;
+    page.running = false;
+    page.runId++;
+    page.status = 'idle';
+    stopVisibilityObserver(page);
+    hideProgress();
+  }
+
+  function waitForRouteContent(callback) {
+    var done = false;
+    var settleTimer = null;
+    var maxTimer = null;
+    var observer = null;
+
+    function finish() {
+      if (done) return;
+      done = true;
+      if (settleTimer) clearTimeout(settleTimer);
+      if (maxTimer) clearTimeout(maxTimer);
+      if (observer) observer.disconnect();
+      callback();
+    }
+
+    if (!document.body || !window.MutationObserver) {
+      setTimeout(finish, AUTO_ROUTE_SETTLE);
+      return;
+    }
+
+    try {
+      observer = new window.MutationObserver(function () {
+        clearTimeout(settleTimer);
+        settleTimer = setTimeout(finish, AUTO_ROUTE_SETTLE);
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    } catch (error) {
+      setTimeout(finish, AUTO_ROUTE_SETTLE);
+      return;
+    }
+
+    settleTimer = setTimeout(finish, AUTO_ROUTE_SETTLE);
+    maxTimer = setTimeout(finish, AUTO_ROUTE_MAX_WAIT);
+  }
+
+  function scheduleAutoRoute() {
+    clearTimeout(state.auto.routeTimer);
+    var seq = ++state.auto.routeSeq;
+
+    state.auto.routeTimer = setTimeout(function () {
+      state.auto.routeTimer = null;
+      if (!autoTranslateEnabled()) return;
+      if (seq !== state.auto.routeSeq) return;
+
+      // The old document/route is stale. Stop its requests, undo any partial
+      // translation, then wait for the new view to finish rendering.
+      abortPageForNavigation();
+      if (state.page.added.length || state.page.originals.size) {
+        restorePage({ silent: true });
+      }
+
+      waitForRouteContent(function () {
+        if (seq !== state.auto.routeSeq) return;
+        autoTranslateNow();
+      });
+    }, AUTO_ROUTE_DEBOUNCE);
+  }
+
+  function checkAutoNavigation() {
+    if (!autoTranslateEnabled()) return;
+    var key = navigationKey();
+    if (key === state.auto.lastKey) return;
+    state.auto.lastKey = key;
+    scheduleAutoRoute();
+  }
+
+  function startNavigationWatcher() {
+    if (!autoTranslateEnabled()) return;
+    if (state.auto.pollTimer) return;
+
+    state.auto.lastKey = navigationKey();
+    state.auto.pollTimer = setInterval(checkAutoNavigation, AUTO_URL_POLL);
+    if (!state.auto.listening) {
+      state.auto.listening = true;
+      window.addEventListener('popstate', checkAutoNavigation);
+      window.addEventListener('hashchange', checkAutoNavigation);
+    }
+  }
+
+  function initAutoTranslation() {
+    if (!autoTranslateEnabled()) return;
+    startNavigationWatcher();
+    if (state.auto.initialized) return;
+    state.auto.initialized = true;
+
+    whenDocumentReady(function () {
+      scheduleAutoStart(AUTO_START_DELAY);
+    });
+  }
+
+  async function startPageTranslation(mode, options) {
+    var auto = !!(options && options.auto);
     var page = state.page;
     if (page.running) {
-      showToast('正在翻译当前页面，请稍候');
+      if (!auto) showToast('正在翻译当前页面，请稍候');
       return;
     }
 
@@ -1375,6 +1560,12 @@
 
     var problem = PT.validateProvider(state.settings);
     if (problem) {
+      // Automatic mode must stay quiet. A misconfigured provider is reported
+      // in the popup when the user explicitly asks for a translation.
+      if (auto) {
+        console.warn('[Safari Translator] 自动翻译未启动：' + problem.message);
+        return;
+      }
       showToast(problem.message, '打开设置', openOptions);
       return;
     }
@@ -1387,7 +1578,9 @@
     var units = mode === 'replace' ? collectTextNodes(target) : collectBlocks(target);
 
     if (!units.length) {
-      showToast('没有找到需要翻译的文本。若页面已是目标语言，或内容位于代码块中，将不会翻译。');
+      if (!auto) {
+        showToast('没有找到需要翻译的文本。若页面已是目标语言，或内容位于代码块中，将不会翻译。');
+      }
       return;
     }
 
@@ -1422,7 +1615,9 @@
     page.offscreen = offscreenQueue.items.length;
     page.observer = startVisibilityObserver(units, nearQueue, offscreenQueue, runId);
 
-    showProgress(units.length, page.offscreen ? '优先翻译可视区' : '');
+    var progressNote = page.offscreen ? '优先翻译可视区' : '';
+    if (auto) progressNote = progressNote ? '自动翻译 · ' + progressNote : '自动翻译';
+    showProgress(units.length, progressNote);
 
     var backgroundReady = false;
     var done = 0;
@@ -1509,11 +1704,15 @@
     if (fatal) {
       page.status = done ? 'translated' : 'idle';
       q('spinner').style.display = 'none';
-      q('progress-title').textContent = '翻译中断';
+      q('progress-title').textContent = auto ? '自动翻译中断' : '翻译中断';
       updateProgress(done + failed, units.length, '');
       var cancelButton = q('progress').querySelector('[data-action="cancel"]');
       if (cancelButton) cancelButton.textContent = '关闭';
-      showToast('翻译中断：' + (fatal.message || '未知错误'), fatal.code === 'config' || fatal.code === 'auth' ? '打开设置' : null, openOptions);
+      showToast(
+        (auto ? '自动翻译中断：' : '翻译中断：') + (fatal.message || '未知错误'),
+        fatal.code === 'config' || fatal.code === 'auth' ? '打开设置' : null,
+        openOptions
+      );
       finishProgress(runId, 4000);
       return;
     }
@@ -1523,12 +1722,14 @@
     if (failed) {
       q('progress-title').textContent = '部分完成';
       updateProgress(done + failed, units.length, failed + ' 段失败');
-      showToast('已翻译 ' + done + ' 段，' + failed + ' 段失败');
+      if (!auto) showToast('已翻译 ' + done + ' 段，' + failed + ' 段失败');
       finishProgress(runId, 2800);
     } else {
       q('progress-title').textContent = '翻译完成';
       updateProgress(units.length, units.length, '');
-      showToast('已完成 ' + done + ' 段翻译', '还原原文', function () { restorePage(); });
+      if (!auto) {
+        showToast('已完成 ' + done + ' 段翻译', '还原原文', function () { restorePage(); });
+      }
       finishProgress(runId, 1600);
     }
   }
@@ -1712,11 +1913,34 @@
     });
 
     PT.onSettingsChanged(function (settings) {
+      var wasAuto = !!(state.settings && state.settings.autoTranslate);
       state.settings = settings;
       updateProviderLabel();
       syncTargetSelect();
       applyTheme();
       if (!settings.selectionButton) hideSelectionButton();
+
+      if (!wasAuto && settings.autoTranslate) {
+        startNavigationWatcher();
+        state.auto.initialized = true;
+        whenDocumentReady(function () {
+          scheduleAutoStart(0);
+        });
+      } else if (wasAuto && !settings.autoTranslate) {
+        if (state.auto.timer) {
+          clearTimeout(state.auto.timer);
+          state.auto.timer = null;
+        }
+        if (state.auto.routeTimer) {
+          clearTimeout(state.auto.routeTimer);
+          state.auto.routeTimer = null;
+        }
+        state.auto.routeSeq++;
+        if (state.auto.pollTimer) {
+          clearInterval(state.auto.pollTimer);
+          state.auto.pollTimer = null;
+        }
+      }
     });
   }
 
@@ -1742,10 +1966,15 @@
     syncTargetSelect();
     applyTheme();
 
+    // Automatic translation is the default. It only starts after the document
+    // is ready so pages that render late still get a complete first pass.
+    initAutoTranslation();
+
     // Expose a tiny hook for the bundled demo page and for debugging.
     window.__PT_CONTENT__ = {
       translateSelection: translateSelection,
       translatePage: startPageTranslation,
+      translateNow: autoTranslateNow,
       restorePage: restorePage,
       openPanel: openPanel,
       closePanel: closePanel,

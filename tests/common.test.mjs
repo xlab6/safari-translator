@@ -91,6 +91,7 @@ test('defaults and normalisation', () => {
   assert.equal(defaults.sourceLang, 'auto');
   assert.equal(defaults.targetLang, 'zh-CN', 'Chinese UI defaults to Chinese');
   assert.equal(defaults.pageMode, 'replace');
+  assert.equal(defaults.autoTranslate, true);
   assert.equal(defaults.selectionButton, true);
   assert.equal(defaults.theme, 'auto');
   assert.equal(defaults.azureEndpoint, 'https://api.cognitive.microsofttranslator.com');
@@ -114,7 +115,11 @@ test('defaults and normalisation', () => {
   assert.equal(normalized.pageMode, 'replace');
   assert.equal(normalized.theme, 'auto');
   assert.equal(normalized.deeplPlan, 'free');
+  assert.equal(normalized.autoTranslate, true, 'old settings without the field enable auto');
   assert.equal(normalized.selectionButton, false);
+
+  const autoOff = PT.normalizeSettings({ autoTranslate: false });
+  assert.equal(autoOff.autoTranslate, false, 'an explicit opt-out is preserved');
 
   const kept = PT.normalizeSettings({ provider: 'tencent', targetLang: 'ja', pageMode: 'replace', theme: 'dark' });
   assert.equal(kept.provider, 'tencent');

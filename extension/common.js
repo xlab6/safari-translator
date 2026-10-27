@@ -10,7 +10,7 @@
 
   var PT = (global.PT = global.PT || {});
 
-  PT.VERSION = '1.0.5';
+  PT.VERSION = '1.1.0';
 
   /* ------------------------------------------------------------------ *
    * Languages
@@ -269,6 +269,7 @@
       sourceLang: 'auto',
       targetLang: PT.defaultTarget(),
       pageMode: 'replace',
+      autoTranslate: true,
       selectionButton: true,
       theme: 'auto',
 
@@ -322,6 +323,9 @@
     if (['auto', 'light', 'dark'].indexOf(out.theme) === -1) out.theme = 'auto';
     if (out.deeplPlan !== 'pro') out.deeplPlan = 'free';
 
+    // Older saved settings have no autoTranslate field. Treat those as enabled:
+    // automatic translation is the default behaviour from 1.1.0 on.
+    out.autoTranslate = out.autoTranslate !== false;
     out.selectionButton = out.selectionButton !== false;
     out.sourceLang = out.sourceLang === 'auto' ? 'auto' : out.sourceLang;
 

@@ -89,6 +89,7 @@
   }
 
   function renderToggles() {
+    $('auto-translate').checked = settings.autoTranslate !== false;
     $('selection-toggle').checked = settings.selectionButton !== false;
     $('version').textContent = 'v' + PT.VERSION;
   }
@@ -183,6 +184,13 @@
       if (!PT.isLangCode(value) || value === 'auto') return;
       var ok = await save({ targetLang: value });
       if (ok) hideStatus();
+    });
+
+    $('auto-translate').addEventListener('change', async function (event) {
+      var desired = event.target.checked;
+      var ok = await save({ autoTranslate: desired });
+      if (!ok) event.target.checked = !desired;
+      else hideStatus();
     });
 
     $('selection-toggle').addEventListener('change', async function (event) {
