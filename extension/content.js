@@ -25,6 +25,41 @@
   var api = window.browser || window.chrome;
   if (!api || !api.runtime) return;
 
+  /* The content script is declared for <all_urls>, so it is also injected into
+   * JSON and plain-text documents (api.github.com, Jenkins artifacts, raw
+   * files, `view-source:`). Those documents have no prose to translate and no
+   * HTML skeleton for the floating UI, so leave them completely untouched. */
+  var TRANSLATABLE_TYPES = { 'text/html': true, 'application/xhtml+xml': true };
+
+  function isTranslatableDocument() {
+    var type = String(document.contentType || 'text/html').split(';')[0].trim().toLowerCase();
+    return TRANSLATABLE_TYPES[type] === true;
+  }
+
+  if (!isTranslatableDocument()) {
+    // Still answer the popup / context menu so the user gets a reason instead
+    // of a silent failure on a document that has no prose to translate.
+    if (api.runtime.onMessage) {
+      api.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+        if (!message || message.__pt !== true) return undefined;
+        if (message.type === 'pt:ping') {
+          sendResponse({ ok: true, translatable: false });
+          return undefined;
+        }
+        sendResponse({
+          ok: false,
+          error: {
+            code: 'document',
+            message: '当前页面不是网页（JSON / 纯文本），无法翻译',
+            hint: ''
+          }
+        });
+        return undefined;
+      });
+    }
+    return;
+  }
+
   var MAX_SELECTION = 5000;
   var BATCH_SIZE = 96;
   var BATCH_CHARS = 12000;
@@ -61,6 +96,7 @@
     layer: null,
     panel: null,
     button: null,
+    stylesBlocked: false,
     selection: null,
     last: null,
     lastRect: null,
@@ -170,6 +206,10 @@
   var SHADOW_CSS = `
     :host { all: initial; }
     *, *::before, *::after { box-sizing: border-box; }
+
+    /* Probe used to detect pages whose CSP refuses the injected stylesheet:
+     * without the stylesheet an <i> stays inline instead of display:none. */
+    .pt-probe { display: none; }
 
     .pt-layer {
       --pt-bg: #ffffff;
@@ -634,6 +674,46 @@
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>'
   };
 
+  /* Install the shadow stylesheet and report whether it is actually live.
+   *
+   * Every "hidden" state of the UI lives in this stylesheet, so a page that
+   * refuses it (a `style-src` CSP without 'unsafe-inline' drops the inline
+   * <style>: api.github.com sends `default-src 'none'`, Jenkins artifacts send
+   * `style-src 'self'`) would otherwise show the raw, unstyled controls on top
+   * of the page. Constructed stylesheets are not inline styles and are not
+   * subject to the page CSP, so they are preferred when available. */
+  function installShadowStyles(shadow) {
+    if (typeof CSSStyleSheet === 'function' && 'adoptedStyleSheets' in shadow) {
+      try {
+        var constructed = new CSSStyleSheet();
+        constructed.replaceSync(SHADOW_CSS);
+        shadow.adoptedStyleSheets = [constructed];
+        if (constructed.cssRules && constructed.cssRules.length) {
+          return { kind: 'constructed', sheet: constructed };
+        }
+      } catch (error) {
+        try { shadow.adoptedStyleSheets = []; } catch (resetError) { /* ignore */ }
+      }
+    }
+
+    var element = document.createElement('style');
+    element.textContent = SHADOW_CSS;
+    shadow.appendChild(element);
+    return { kind: 'element', style: element };
+  }
+
+  function shadowStylesActive(styles, probe) {
+    if (!styles) return false;
+    // A style element refused by CSP has no CSSStyleSheet at all.
+    if (styles.kind === 'element' && !styles.style.sheet) return false;
+    if (!probe || !window.getComputedStyle) return styles.kind === 'constructed';
+    try {
+      return window.getComputedStyle(probe).display === 'none';
+    } catch (error) {
+      return false;
+    }
+  }
+
   function createUI() {
     var host = document.createElement('div');
     host.setAttribute('data-pt-ui', '');
@@ -642,7 +722,7 @@
 
     var shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML =
-      '<style>' + SHADOW_CSS + '</style>' +
+      '<i class="pt-probe" aria-hidden="true"></i>' +
       '<div class="pt-layer" data-theme="light" data-pt-ui="">' +
         '<button class="pt-sel-btn" type="button" data-role="selection" aria-label="翻译所选文字">' +
           '<span class="pt-logo">文</span><span>翻译</span>' +
@@ -702,7 +782,16 @@
         '</section>' +
       '</div>';
 
+    var styles = installShadowStyles(shadow);
     document.documentElement.appendChild(host);
+
+    if (!shadowStylesActive(styles, shadow.querySelector('.pt-probe'))) {
+      // Fail closed: an unstyled UI on top of the page is worse than no UI.
+      host.remove();
+      state.stylesBlocked = true;
+      console.warn('[Safari Translator] 页面 CSP 阻止了扩展样式，已跳过注入：' + location.href);
+      return;
+    }
 
     state.host = host;
     state.shadow = shadow;
@@ -2273,6 +2362,7 @@
     }
 
     createUI();
+    if (state.stylesBlocked) return; // page CSP refuses the UI stylesheet
 
     try {
       state.settings = await PT.loadSettings();
